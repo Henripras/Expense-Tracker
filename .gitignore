@@ -26,3 +26,5 @@ dist-ssr
 # Temp profile dirs
 temp_rekap_profile/
 temp_puppeteer_profile/
+
+.vercel

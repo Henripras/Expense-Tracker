@@ -1,0 +1,7 @@
+# Ignore temp profile dirs
+temp_rekap_profile/
+temp_puppeteer_profile/
+node_modules/
+dist/
+.git/
+.vercel/
