@@ -1,0 +1,78 @@
+{
+  "transactions": [
+    {
+      "id": "gaji-test-1",
+      "description": "Gaji Bulanan Utama",
+      "amount": 15000000,
+      "type": "income",
+      "category": "pekerjaan",
+      "date": "2026-06-01",
+      "notes": "Gaji masuk rekening utama",
+      "account": "gaji"
+    },
+    {
+      "id": "gaji-test-2",
+      "description": "Bayar Sewa Kost",
+      "amount": 3000000,
+      "type": "expense",
+      "category": "tempat-tinggal",
+      "date": "2026-06-02",
+      "notes": "Sewa kost bulanan",
+      "account": "gaji"
+    },
+    {
+      "id": "gaji-test-3",
+      "description": "Belanja Sayur & Sembako",
+      "amount": 1500000,
+      "type": "expense",
+      "category": "makanan",
+      "date": "2026-06-05",
+      "notes": "Kebutuhan dapur bulanan",
+      "account": "gaji"
+    },
+    {
+      "id": "gaji-test-4",
+      "description": "Tagihan WiFi & Token Listrik",
+      "amount": 750000,
+      "type": "expense",
+      "category": "tagihan",
+      "date": "2026-06-10",
+      "notes": "PLN & Indihome",
+      "account": "gaji"
+    },
+    {
+      "id": "jualan-test-1",
+      "description": "Penjualan Produk Sepatu",
+      "amount": 8500000,
+      "type": "income",
+      "category": "freelance",
+      "date": "2026-06-03",
+      "notes": "Pesanan grosir 10 pasang",
+      "account": "jualan"
+    },
+    {
+      "id": "jualan-test-2",
+      "description": "Kulakan Bahan Baku Sepatu",
+      "amount": 4200000,
+      "type": "expense",
+      "category": "belanja",
+      "date": "2026-06-04",
+      "notes": "Kulit sintetis & sol karet",
+      "account": "jualan"
+    },
+    {
+      "id": "jualan-test-3",
+      "description": "Biaya Iklan Facebook Ads",
+      "amount": 1200000,
+      "type": "expense",
+      "category": "lain-lain-out",
+      "date": "2026-06-15",
+      "notes": "Promosi launching",
+      "account": "jualan"
+    }
+  ],
+  "budgets": {
+    "gaji_2026-06": 6000000,
+    "jualan_2026-06": 10000000
+  }
+}

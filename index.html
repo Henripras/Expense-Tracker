@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Finansiku - Pelacak Pemasukan & Pengeluaran Bulanan</title>
+    <meta name="description" content="Kelola keuangan pribadi Anda secara mudah, aman, dan responsif. Catat pemasukan, pengeluaran bulanan, dan pantau batas anggaran belanja Anda dengan diagram interaktif." />
+    <meta name="keywords" content="expense tracker, catat keuangan, pelacak pengeluaran, anggaran bulanan, hemat uang" />
+    <meta name="author" content="Finansiku Team" />
+    <link rel="stylesheet" href="./src/index.css" />
+  </head>
+  <body>
+    <div id="root">
+      <!-- App Header -->
+      <header class="app-header">
+        <div class="brand-section">
+          <div class="logo-icon">💸</div>
+          <div>
+            <h1>Finansiku</h1>
+            <p style="font-size: 0.8rem; color: var(--text-secondary)">Pelacak Keuangan Dinamis &amp; Responsif</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- Month/Year selector navigation -->
+          <div class="month-nav-container">
+            <button id="btn-prev-month" class="btn btn-outline btn-icon" title="Bulan Sebelumnya">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+            <div style="display: flex; align-items: center; gap: 0.25rem;">
+              <select id="select-month" class="form-control filter-select" style="border: none; background: transparent; font-weight: 600; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 1rem; width: auto; text-align-last: center;">
+                <option value="01">Januari</option>
+                <option value="02">Februari</option>
+                <option value="03">Maret</option>
+                <option value="04">April</option>
+                <option value="05">Mei</option>
+                <option value="06">Juni</option>
+                <option value="07">Juli</option>
+                <option value="08">Agustus</option>
+                <option value="09">September</option>
+                <option value="10">Oktober</option>
+                <option value="11">November</option>
+                <option value="12">Desember</option>
+              </select>
+              <select id="select-year" class="form-control filter-select" style="border: none; background: transparent; font-weight: 600; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 1rem; width: auto; text-align-last: center;">
+                <!-- Dynamically populated via JS -->
+              </select>
+            </div>
+            <button id="btn-next-month" class="btn btn-outline btn-icon" title="Bulan Berikutnya">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Import/Export buttons -->
+          <div style="display: flex; gap: 0.5rem;">
+            <button id="btn-export" class="btn btn-outline" title="Ekspor Rekapitulasi Keuangan ke Excel">
+              📥 Backup Excel
+            </button>
+            <button id="btn-import" class="btn btn-outline" title="Impor Data dari JSON">
+              📤 Restore
+            </button>
+            <button id="btn-reset" class="btn btn-danger-outline" title="Hapus Semua Data">
+              🗑️ Reset
+            </button>
+            <input type="file" id="import-file-input" style="display: none" accept=".json" />
+          </div>
+
+          <!-- Add Transaction Button -->
+          <button id="btn-add-transaction" class="btn btn-primary">
+            <span style="font-size: 1rem; font-weight: bold">+</span> Transaksi Baru
+          </button>
+        </div>
+      </header>
+
+      <!-- ================= SECTION 1: KEUNGAN GAJI ================= -->
+      <section class="panel" style="background: rgba(30, 41, 59, 0.2); border-color: rgba(99, 102, 241, 0.15); margin-top: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+          <span style="font-size: 1.75rem;">💼</span>
+          <h2 style="font-size: 1.75rem; background: linear-gradient(to right, #ffffff, #c7d2fe); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Keuangan Gaji (Pribadi)</h2>
+        </div>
+
+        <!-- Gaji Dashboard Cards -->
+        <div class="dashboard-grid" style="margin-bottom: 1.5rem;">
+          <!-- Income -->
+          <div class="card card-income">
+            <div class="card-header">
+              <span class="card-title">Total Pemasukan Gaji</span>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div id="val-gaji-income" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Expense -->
+          <div class="card card-expense">
+            <div class="card-header">
+              <span class="card-title">Total Pengeluaran Gaji</span>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div id="val-gaji-expense" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Balance -->
+          <div class="card card-balance">
+            <div class="card-header">
+              <span class="card-title">Saldo Bersih Gaji</span>
+              <div id="icon-gaji-balance-wrapper" class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                  <line x1="12" y1="10" x2="12" y2="10"></line>
+                  <line x1="8" y1="10" x2="8" y2="10"></line>
+                  <line x1="16" y1="10" x2="16" y2="10"></line>
+                  <line x1="6" y1="14" x2="18" y2="14"></line>
+                </svg>
+              </div>
+            </div>
+            <div id="val-gaji-balance" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Budget Card -->
+          <div class="card card-budget">
+            <div class="card-header">
+              <span class="card-title">Batas Anggaran Gaji</span>
+              <button id="btn-edit-gaji-budget" class="btn btn-outline" style="padding: 0.15rem 0.5rem; font-size: 0.75rem; border-radius: 6px;">Ubah</button>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="16"></line>
+                  <line x1="8" y1="12" x2="16" y2="12"></line>
+                </svg>
+              </div>
+            </div>
+            <div id="gaji-budget-display-view">
+              <div id="val-gaji-budget" class="card-value">Belum Diatur</div>
+              <div id="gaji-budget-progress-sec" class="budget-progress-container" style="display: none;">
+                <div class="budget-text-row">
+                  <span id="gaji-budget-status-text">Pemakaian Anggaran</span>
+                  <span id="gaji-budget-percent-text">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="gaji-budget-progress-fill" class="progress-bar-fill" style="width: 0%; background-color: var(--primary);"></div>
+                </div>
+              </div>
+              <div id="gaji-budget-empty-desc" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">Atur limit untuk memantau pengeluaran Gaji Anda.</div>
+            </div>
+            <form id="gaji-budget-edit-form" style="display: none; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
+              <input type="text" inputmode="numeric" id="input-gaji-budget-limit" class="form-control" placeholder="Limit Anggaran (Rp)" style="padding: 0.35rem 0.5rem; font-size: 0.9rem;" />
+              <div style="display: flex; gap: 0.35rem;">
+                <button type="submit" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; flex-grow: 1;">Simpan</button>
+                <button type="button" id="btn-cancel-gaji-budget" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Batal</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Gaji Main Content layout -->
+        <div class="main-dashboard-layout">
+          <!-- Gaji Transaction List -->
+          <div class="panel" style="display: flex; flex-direction: column; gap: 1.25rem; background: rgba(15, 23, 42, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Riwayat Transaksi Gaji</h3>
+              <span id="gaji-tx-count-indicator" style="font-size: 0.85rem; color: var(--text-secondary)">Menampilkan 0 transaksi</span>
+            </div>
+            <div class="list-header-row">
+              <div class="filters-wrapper">
+                <div class="search-input-wrapper">
+                  <svg class="search-icon-inside" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <input type="text" id="gaji-input-search" class="form-control" placeholder="Cari transaksi..." />
+                </div>
+                <select id="gaji-filter-type" class="form-control filter-select">
+                  <option value="all">Semua Tipe</option>
+                  <option value="income">📈 Pemasukan</option>
+                  <option value="expense">📉 Pengeluaran</option>
+                </select>
+                <select id="gaji-filter-category" class="form-control filter-select">
+                  <option value="all">Semua Kategori</option>
+                </select>
+                <select id="gaji-filter-sort" class="form-control filter-select">
+                  <option value="date-desc">📅 Terbaru</option>
+                  <option value="date-asc">📅 Terlama</option>
+                  <option value="amount-desc">🪙 Nominal Terbesar</option>
+                  <option value="amount-asc">🪙 Nominal Terkecil</option>
+                </select>
+              </div>
+            </div>
+            <div id="gaji-transactions-container" class="transactions-container">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Gaji Analytics -->
+          <div class="panel analytics-card-grid" style="background: rgba(15, 23, 42, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Analisis Pengeluaran Gaji</h3>
+            </div>
+            <div id="gaji-analytics-active-view" style="display: flex; flex-direction: column; gap: 1rem;">
+              <div class="chart-container">
+                <svg width="180" height="180" viewBox="0 0 160 160" class="pie-chart-svg">
+                  <circle cx="80" cy="80" r="60" fill="transparent" stroke="rgba(255, 255, 255, 0.05)" stroke-width="18" />
+                  <g id="gaji-donut-sectors-group"></g>
+                </svg>
+                <div class="chart-center-text">
+                  <span id="gaji-chart-center-label" class="chart-center-lbl">Total Belanja</span>
+                  <span id="gaji-chart-center-value" class="chart-center-value">Rp 0</span>
+                  <span id="gaji-chart-center-percent" class="chart-center-lbl" style="color: var(--text-secondary);">100%</span>
+                </div>
+              </div>
+              <div id="gaji-chart-legend" class="chart-legend"></div>
+              <hr style="border: none; height: 1px; background: var(--panel-border); margin: 0.5rem 0;" />
+              <div>
+                <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-primary);">Rincian Kategori</h4>
+                <div id="gaji-category-bar-list" class="category-bar-list"></div>
+              </div>
+            </div>
+            <div id="gaji-analytics-empty-view" class="empty-state" style="display: none;">
+              <div class="empty-state-icon">📊</div>
+              <h4>Belum ada pengeluaran dicatat</h4>
+              <p style="font-size: 0.85rem;">Masukkan transaksi pengeluaran Gaji untuk melihat analisis.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 2: KEUNGAN JUALAN ================= -->
+      <section class="panel" style="background: rgba(30, 41, 59, 0.2); border-color: rgba(244, 63, 94, 0.15); margin-top: 1.5rem; margin-bottom: 2rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+          <span style="font-size: 1.75rem;">🏪</span>
+          <h2 style="font-size: 1.75rem; background: linear-gradient(to right, #ffffff, #fecdd3); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Keuangan Jualan (Store Jualan)</h2>
+        </div>
+
+        <!-- Jualan Dashboard Cards -->
+        <div class="dashboard-grid" style="margin-bottom: 1.5rem;">
+          <!-- Income -->
+          <div class="card card-income">
+            <div class="card-header">
+              <span class="card-title">Total Pemasukan Jualan</span>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div id="val-jualan-income" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Expense -->
+          <div class="card card-expense">
+            <div class="card-header">
+              <span class="card-title">Total Pengeluaran Jualan</span>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div id="val-jualan-expense" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Balance -->
+          <div class="card card-balance">
+            <div class="card-header">
+              <span class="card-title">Saldo Bersih Jualan</span>
+              <div id="icon-jualan-balance-wrapper" class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                  <line x1="12" y1="10" x2="12" y2="10"></line>
+                  <line x1="8" y1="10" x2="8" y2="10"></line>
+                  <line x1="16" y1="10" x2="16" y2="10"></line>
+                  <line x1="6" y1="14" x2="18" y2="14"></line>
+                </svg>
+              </div>
+            </div>
+            <div id="val-jualan-balance" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Budget Card -->
+          <div class="card card-budget">
+            <div class="card-header">
+              <span class="card-title">Batas Anggaran Jualan</span>
+              <button id="btn-edit-jualan-budget" class="btn btn-outline" style="padding: 0.15rem 0.5rem; font-size: 0.75rem; border-radius: 6px;">Ubah</button>
+              <div class="card-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="16"></line>
+                  <line x1="8" y1="12" x2="16" y2="12"></line>
+                </svg>
+              </div>
+            </div>
+            <div id="jualan-budget-display-view">
+              <div id="val-jualan-budget" class="card-value">Belum Diatur</div>
+              <div id="jualan-budget-progress-sec" class="budget-progress-container" style="display: none;">
+                <div class="budget-text-row">
+                  <span id="jualan-budget-status-text">Pemakaian Anggaran</span>
+                  <span id="jualan-budget-percent-text">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="jualan-budget-progress-fill" class="progress-bar-fill" style="width: 0%; background-color: var(--primary);"></div>
+                </div>
+              </div>
+              <div id="jualan-budget-empty-desc" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">Atur limit untuk memantau pengeluaran Jualan Anda.</div>
+            </div>
+            <form id="jualan-budget-edit-form" style="display: none; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
+              <input type="text" inputmode="numeric" id="input-jualan-budget-limit" class="form-control" placeholder="Limit Anggaran (Rp)" style="padding: 0.35rem 0.5rem; font-size: 0.9rem;" />
+              <div style="display: flex; gap: 0.35rem;">
+                <button type="submit" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; flex-grow: 1;">Simpan</button>
+                <button type="button" id="btn-cancel-jualan-budget" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Batal</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Jualan Main Content layout -->
+        <div class="main-dashboard-layout">
+          <!-- Jualan Transaction List -->
+          <div class="panel" style="display: flex; flex-direction: column; gap: 1.25rem; background: rgba(15, 23, 42, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Riwayat Transaksi Jualan</h3>
+              <span id="jualan-tx-count-indicator" style="font-size: 0.85rem; color: var(--text-secondary)">Menampilkan 0 transaksi</span>
+            </div>
+            <div class="list-header-row">
+              <div class="filters-wrapper">
+                <div class="search-input-wrapper">
+                  <svg class="search-icon-inside" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <input type="text" id="jualan-input-search" class="form-control" placeholder="Cari transaksi..." />
+                </div>
+                <select id="jualan-filter-type" class="form-control filter-select">
+                  <option value="all">Semua Tipe</option>
+                  <option value="income">📈 Pemasukan</option>
+                  <option value="expense">📉 Pengeluaran</option>
+                </select>
+                <select id="jualan-filter-category" class="form-control filter-select">
+                  <option value="all">Semua Kategori</option>
+                </select>
+                <select id="jualan-filter-sort" class="form-control filter-select">
+                  <option value="date-desc">📅 Terbaru</option>
+                  <option value="date-asc">📅 Terlama</option>
+                  <option value="amount-desc">🪙 Nominal Terbesar</option>
+                  <option value="amount-asc">🪙 Nominal Terkecil</option>
+                </select>
+              </div>
+            </div>
+            <div id="jualan-transactions-container" class="transactions-container">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Jualan Analytics -->
+          <div class="panel analytics-card-grid" style="background: rgba(15, 23, 42, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Analisis Pengeluaran Jualan</h3>
+            </div>
+            <div id="jualan-analytics-active-view" style="display: flex; flex-direction: column; gap: 1rem;">
+              <div class="chart-container">
+                <svg width="180" height="180" viewBox="0 0 160 160" class="pie-chart-svg">
+                  <circle cx="80" cy="80" r="60" fill="transparent" stroke="rgba(255, 255, 255, 0.05)" stroke-width="18" />
+                  <g id="jualan-donut-sectors-group"></g>
+                </svg>
+                <div class="chart-center-text">
+                  <span id="jualan-chart-center-label" class="chart-center-lbl">Total Belanja</span>
+                  <span id="jualan-chart-center-value" class="chart-center-value">Rp 0</span>
+                  <span id="jualan-chart-center-percent" class="chart-center-lbl" style="color: var(--text-secondary);">100%</span>
+                </div>
+              </div>
+              <div id="jualan-chart-legend" class="chart-legend"></div>
+              <hr style="border: none; height: 1px; background: var(--panel-border); margin: 0.5rem 0;" />
+              <div>
+                <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-primary);">Rincian Kategori</h4>
+                <div id="jualan-category-bar-list" class="category-bar-list"></div>
+              </div>
+            </div>
+            <div id="jualan-analytics-empty-view" class="empty-state" style="display: none;">
+              <div class="empty-state-icon">📊</div>
+              <h4>Belum ada pengeluaran dicatat</h4>
+              <p style="font-size: 0.85rem;">Masukkan transaksi pengeluaran Jualan untuk melihat analisis.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 3: TOTAL KESELURAHAN ================= -->
+      <section class="panel" style="background: rgba(30, 41, 59, 0.3); border-color: rgba(99, 102, 241, 0.4); margin-top: 1.5rem; margin-bottom: 2rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+          <span style="font-size: 1.75rem;">⚖️</span>
+          <h2 style="font-size: 1.75rem; background: linear-gradient(to right, #ffffff, #c7d2fe); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Total Keseluruhan (Konsolidasi)</h2>
+        </div>
+
+        <div class="dashboard-grid">
+          <!-- Grand Income -->
+          <div class="card" style="border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.03);">
+            <div class="card-header">
+              <span class="card-title" style="color: var(--text-primary);">Pemasukan Gabungan</span>
+              <span style="font-size: 1.25rem;">📈</span>
+            </div>
+            <div id="val-grand-income" class="card-value" style="color: var(--income);">Rp 0</div>
+          </div>
+
+          <!-- Grand Expense -->
+          <div class="card" style="border-color: rgba(244, 63, 94, 0.3); background: rgba(244, 63, 94, 0.03);">
+            <div class="card-header">
+              <span class="card-title" style="color: var(--text-primary);">Pengeluaran Gabungan</span>
+              <span style="font-size: 1.25rem;">📉</span>
+            </div>
+            <div id="val-grand-expense" class="card-value" style="color: var(--expense);">Rp 0</div>
+          </div>
+
+          <!-- Grand Balance -->
+          <div class="card" id="card-grand-balance" style="border-color: rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.03);">
+            <div class="card-header">
+              <span class="card-title" style="color: var(--text-primary);">Saldo Bersih Gabungan</span>
+              <span style="font-size: 1.25rem;">⚖️</span>
+            </div>
+            <div id="val-grand-balance" class="card-value">Rp 0</div>
+          </div>
+
+          <!-- Grand Budget -->
+          <div class="card" style="border-color: rgba(245, 158, 11, 0.3); background: rgba(245, 158, 11, 0.03);">
+            <div class="card-header">
+              <span class="card-title" style="color: var(--text-primary);">Anggaran Gabungan</span>
+              <span style="font-size: 1.25rem;">🛡️</span>
+            </div>
+            <div id="val-grand-budget" class="card-value" style="color: var(--warning);">Rp 0</div>
+            <div id="grand-budget-progress-sec" class="budget-progress-container" style="display: none; margin-top: 0.5rem;">
+              <div class="budget-text-row">
+                <span id="grand-budget-status-text">Pemakaian Anggaran Gabungan</span>
+                <span id="grand-budget-percent-text">0%</span>
+              </div>
+              <div class="progress-bar-bg">
+                <div id="grand-budget-progress-fill" class="progress-bar-fill" style="width: 0%; background-color: var(--warning);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transaction modal form (hidden by default) -->
+      <div id="transaction-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="modal-title">Tambah Transaksi</h2>
+            <button id="btn-close-modal" class="modal-close-btn" aria-label="Tutup modal">&times;</button>
+          </div>
+
+          <!-- Type Selector Toggle -->
+          <div class="type-selector">
+            <button type="button" id="btn-type-income" class="type-btn type-btn-income">
+              <span style="font-size: 1.1rem;">📈</span> Pemasukan
+            </button>
+            <button type="button" id="btn-type-expense" class="type-btn type-btn-expense active">
+              <span style="font-size: 1.1rem;">📉</span> Pengeluaran
+            </button>
+          </div>
+
+          <form id="transaction-form">
+            <!-- ID holder for editing -->
+            <input type="hidden" id="input-tx-id" />
+
+            <!-- Account Selection (Pembukuan) -->
+            <div class="form-group">
+              <label class="form-label" for="input-account">Pilih Pembukuan / Akun</label>
+              <select id="input-account" class="form-control" required>
+                <option value="gaji" style="background: #111827; color: white;">💼 Keuangan Gaji (Pribadi)</option>
+                <option value="jualan" style="background: #111827; color: white;">🏪 Keuangan Jualan (Store Jualan)</option>
+              </select>
+            </div>
+
+            <!-- Deskripsi -->
+            <div class="form-group">
+              <label class="form-label" for="input-description">Deskripsi / Nama</label>
+              <input type="text" id="input-description" class="form-control" placeholder="Contoh: Belanja Bulanan, Gaji Projek" required />
+              <span id="err-description" style="color: var(--expense); font-size: 0.75rem; margin-top: 0.25rem; display: none;"></span>
+            </div>
+
+            <div class="form-row-2">
+              <!-- Jumlah Uang -->
+              <div class="form-group">
+                <label class="form-label" for="input-amount">Jumlah Uang (Rp)</label>
+                <input type="text" inputmode="numeric" id="input-amount" class="form-control" placeholder="0" required />
+                <span id="err-amount" style="color: var(--expense); font-size: 0.75rem; margin-top: 0.25rem; display: none;"></span>
+              </div>
+
+              <!-- Tanggal -->
+              <div class="form-group">
+                <label class="form-label" for="input-date">Tanggal</label>
+                <input type="date" id="input-date" class="form-control" required />
+                <span id="err-date" style="color: var(--expense); font-size: 0.75rem; margin-top: 0.25rem; display: none;"></span>
+              </div>
+            </div>
+
+            <!-- Kategori -->
+            <div class="form-group">
+              <label class="form-label" for="input-category">Kategori</label>
+              <select id="input-category" class="form-control" required>
+                <!-- Dynamically filled based on active type -->
+              </select>
+              <span id="err-category" style="color: var(--expense); font-size: 0.75rem; margin-top: 0.25rem; display: none;"></span>
+            </div>
+
+            <!-- Catatan Tambahan -->
+            <div class="form-group">
+              <label class="form-label" for="input-notes">Catatan Tambahan (Opsional)</label>
+              <textarea id="input-notes" class="form-control" placeholder="Tulis rincian atau keterangan tambahan di sini..." rows="3" style="resize: none;"></textarea>
+            </div>
+
+            <!-- Actions -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.75rem;">
+              <button type="button" id="btn-cancel-modal" class="btn btn-outline" style="min-width: 100px;">Batal</button>
+              <button type="submit" id="btn-submit-modal" class="btn btn-primary" style="min-width: 120px;">Simpan</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- SheetJS (XLSX) for in-browser Excel generation -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Main JavaScript Logic -->
+    <script src="./src/app.js"></script>
+  </body>
+</html>
