@@ -567,6 +567,13 @@ h3 {
   background: rgba(15, 23, 42, 0.9);
 }
 
+/* Ensure dropdown options are readable with white text on dark background */
+select option,
+option {
+  background-color: #111827;
+  color: #f8fafc;
+}
+
 .form-row-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

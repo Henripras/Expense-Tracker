@@ -194,17 +194,35 @@ const getSeedBudgets = () => {
 };
 
 // Global App State
-let transactions = localStorage.getItem('et_transactions') 
-  ? JSON.parse(localStorage.getItem('et_transactions')) 
-  : [];
+const hasInitialized = localStorage.getItem('et_initialized');
 
-let budgets = localStorage.getItem('et_budgets') 
-  ? JSON.parse(localStorage.getItem('et_budgets')) 
-  : {};
+let transactions = [];
+let budgets = {};
+
+if (hasInitialized) {
+  transactions = localStorage.getItem('et_transactions') 
+    ? JSON.parse(localStorage.getItem('et_transactions')) 
+    : [];
+  budgets = localStorage.getItem('et_budgets') 
+    ? JSON.parse(localStorage.getItem('et_budgets')) 
+    : {};
+} else {
+  // First time load: use seed data
+  transactions = getSeedTransactions();
+  budgets = getSeedBudgets();
+  localStorage.setItem('et_transactions', JSON.stringify(transactions));
+  localStorage.setItem('et_budgets', JSON.stringify(budgets));
+  localStorage.setItem('et_initialized', 'true');
+}
 
 const now = new Date();
-let selectedMonth = String(now.getMonth() + 1).padStart(2, '0');
-let selectedYear = String(now.getFullYear());
+let selectedMonth = localStorage.getItem('et_selected_month') 
+  ? localStorage.getItem('et_selected_month') 
+  : String(now.getMonth() + 1).padStart(2, '0');
+
+let selectedYear = localStorage.getItem('et_selected_year') 
+  ? localStorage.getItem('et_selected_year') 
+  : String(now.getFullYear());
 
 // Form Editing Temp State
 let editingTxId = null;
@@ -319,21 +337,47 @@ const saveToLocalStorage = () => {
 // Initialize Year Dropdowns
 const initSelectors = () => {
   const currentY = new Date().getFullYear();
-  selectYear.innerHTML = '';
+  const years = [];
   for (let y = currentY - 4; y <= currentY + 4; y++) {
+    years.push(String(y));
+  }
+  if (!years.includes(selectedYear)) {
+    years.push(selectedYear);
+    years.sort();
+  }
+
+  selectYear.innerHTML = '';
+  years.forEach(y => {
     const opt = document.createElement('option');
-    opt.value = String(y);
-    opt.innerText = String(y);
+    opt.value = y;
+    opt.innerText = y;
     opt.style.background = '#1f2937';
     opt.style.color = 'white';
     selectYear.appendChild(opt);
-  }
+  });
   
   selectMonth.value = selectedMonth;
   selectYear.value = selectedYear;
 };
 
 // CRUD Operations
+const autoNavigateToDate = (dateStr) => {
+  if (!dateStr) return;
+  const parts = dateStr.split('-');
+  if (parts.length >= 2) {
+    const [year, month] = parts;
+    selectedMonth = month;
+    selectedYear = year;
+    
+    // Save to localStorage
+    localStorage.setItem('et_selected_month', selectedMonth);
+    localStorage.setItem('et_selected_year', selectedYear);
+    
+    // Update dropdown UI
+    initSelectors();
+  }
+};
+
 const addTransaction = (data) => {
   const newTx = {
     id: 'tx-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
@@ -341,12 +385,14 @@ const addTransaction = (data) => {
   };
   transactions.unshift(newTx);
   saveToLocalStorage();
+  autoNavigateToDate(data.date);
   renderAll();
 };
 
 const editTransaction = (id, data) => {
   transactions = transactions.map(t => t.id === id ? { ...t, ...data } : t);
   saveToLocalStorage();
+  autoNavigateToDate(data.date);
   renderAll();
 };
 
@@ -886,8 +932,9 @@ const bindEvents = () => {
     }
     selectedMonth = String(m).padStart(2, '0');
     selectedYear = String(y);
-    selectMonth.value = selectedMonth;
-    selectYear.value = selectedYear;
+    initSelectors();
+    localStorage.setItem('et_selected_month', selectedMonth);
+    localStorage.setItem('et_selected_year', selectedYear);
     renderAll();
   });
 
@@ -901,18 +948,21 @@ const bindEvents = () => {
     }
     selectedMonth = String(m).padStart(2, '0');
     selectedYear = String(y);
-    selectMonth.value = selectedMonth;
-    selectYear.value = selectedYear;
+    initSelectors();
+    localStorage.setItem('et_selected_month', selectedMonth);
+    localStorage.setItem('et_selected_year', selectedYear);
     renderAll();
   });
 
   selectMonth.addEventListener('change', (e) => {
     selectedMonth = e.target.value;
+    localStorage.setItem('et_selected_month', selectedMonth);
     renderAll();
   });
 
   selectYear.addEventListener('change', (e) => {
     selectedYear = e.target.value;
+    localStorage.setItem('et_selected_year', selectedYear);
     renderAll();
   });
 
@@ -1255,6 +1305,7 @@ const bindEvents = () => {
         if (parsed.budgets && typeof parsed.budgets === 'object') {
           budgets = parsed.budgets;
         }
+        localStorage.setItem('et_initialized', 'true');
         saveToLocalStorage();
         renderAll();
         alert('Data berhasil diimpor!');
