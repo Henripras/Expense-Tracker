@@ -216,13 +216,29 @@ if (hasInitialized) {
 }
 
 const now = new Date();
-let selectedMonth = localStorage.getItem('et_selected_month') 
-  ? localStorage.getItem('et_selected_month') 
-  : String(now.getMonth() + 1).padStart(2, '0');
+let selectedMonth = localStorage.getItem('et_selected_month');
+let selectedYear = localStorage.getItem('et_selected_year');
 
-let selectedYear = localStorage.getItem('et_selected_year') 
-  ? localStorage.getItem('et_selected_year') 
-  : String(now.getFullYear());
+if (!selectedMonth || !selectedYear) {
+  if (transactions && transactions.length > 0) {
+    // Sort transactions by date descending to find the latest active transaction date
+    const sortedTxs = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const latestTx = sortedTxs[0];
+    const dateParts = latestTx.date.split('-');
+    if (dateParts.length >= 2) {
+      selectedYear = dateParts[0];
+      selectedMonth = dateParts[1];
+    }
+  }
+  
+  // Fallback if still not set
+  if (!selectedMonth) {
+    selectedMonth = String(now.getMonth() + 1).padStart(2, '0');
+  }
+  if (!selectedYear) {
+    selectedYear = String(now.getFullYear());
+  }
+}
 
 // Form Editing Temp State
 let editingTxId = null;
@@ -1331,6 +1347,10 @@ const bindEvents = () => {
 
 // Start application
 const init = () => {
+  // Ensure the selected month and year are locked into localStorage on startup
+  localStorage.setItem('et_selected_month', selectedMonth);
+  localStorage.setItem('et_selected_year', selectedYear);
+
   initSelectors();
   populateCategoryFilterOptions('gaji');
   populateCategoryFilterOptions('jualan');
