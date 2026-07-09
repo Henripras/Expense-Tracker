@@ -8,9 +8,14 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "rekap": "node scripts/rekap-excel.js"
+    "rekap": "node scripts/rekap-excel.js",
+    "android:build": "npm run build && npx cap sync android",
+    "android:apk": "node scripts/build-apk.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
