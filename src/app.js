@@ -2,14 +2,14 @@ import { db } from './firebase.js';
 import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 
 // Unique Sync Code setup
+const DEFAULT_SYNC_CODE = 'FN-UTAMA';
 let syncCode = localStorage.getItem('et_sync_code');
-if (!syncCode) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  syncCode = `FN-${rand}`;
+const isCustomized = localStorage.getItem('et_sync_customized') === 'true';
+
+// If no sync code is set, or if the user is using a legacy random code and hasn't customized it,
+// we default to 'FN-UTAMA' so that all their devices automatically sync out-of-the-box.
+if (!syncCode || (!isCustomized && syncCode !== DEFAULT_SYNC_CODE)) {
+  syncCode = DEFAULT_SYNC_CODE;
   localStorage.setItem('et_sync_code', syncCode);
 }
 
@@ -460,6 +460,7 @@ const connectToSyncCode = async (newCode) => {
       syncCode = newCode;
       
       localStorage.setItem('et_sync_code', syncCode);
+      localStorage.setItem('et_sync_customized', 'true');
       localStorage.setItem('et_initialized', 'true');
       
       saveToLocalStorage(false); 
