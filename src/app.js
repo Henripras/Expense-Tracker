@@ -396,18 +396,25 @@ const setupFirebaseListener = () => {
     
     if (docSnap.exists()) {
       const data = docSnap.data();
-      const cloudUpdatedAt = data.updatedAt || 0;
+      const cloudTransactions = data.transactions || [];
+      const cloudBudgets = data.budgets || {};
       
-      // Only update local if cloud is newer than local state
-      if (cloudUpdatedAt > lastSyncTimestamp) {
+      const localTxsStr = localStorage.getItem('et_transactions') || '[]';
+      const localBudgetsStr = localStorage.getItem('et_budgets') || '{}';
+      
+      const cloudTxsStr = JSON.stringify(cloudTransactions);
+      const cloudBudgetsStr = JSON.stringify(cloudBudgets);
+      
+      // Compare actual data changes rather than client timestamps to prevent clock-skew sync failure
+      if (localTxsStr !== cloudTxsStr || localBudgetsStr !== cloudBudgetsStr) {
         console.log('Syncing updates from cloud database...');
         isUpdatingFromSync = true;
         
-        transactions = data.transactions || [];
-        budgets = data.budgets || {};
-        lastSyncTimestamp = cloudUpdatedAt;
+        transactions = cloudTransactions;
+        budgets = cloudBudgets;
+        lastSyncTimestamp = data.updatedAt || Date.now();
         
-        localStorage.setItem('et_last_sync_time', String(cloudUpdatedAt));
+        localStorage.setItem('et_last_sync_time', String(lastSyncTimestamp));
         saveToLocalStorage(true); // Save to local but skip pushing back to cloud
         
         renderAll();
