@@ -1576,14 +1576,14 @@ const init = async () => {
   populateCategoryFilterOptions('jualan');
   bindEvents();
   
-  if (syncCode === DEFAULT_SYNC_CODE && localStorage.getItem('et_sync_migrated_v2') !== 'true') {
-    await migrateToDefaultSyncCode();
-  }
-  
   setupFirebaseListener();
   initSyncCodeUI();
   renderAll();
 
+  // Run migration in the background so it does not block the UI render on startup
+  if (syncCode === DEFAULT_SYNC_CODE && localStorage.getItem('et_sync_migrated_v2') !== 'true') {
+    migrateToDefaultSyncCode();
+  }
 };
 
 if (document.readyState === 'loading') {
