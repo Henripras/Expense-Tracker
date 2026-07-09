@@ -1514,8 +1514,52 @@ const bindEvents = () => {
   });
 };
 
+const migrateToDefaultSyncCode = async () => {
+  if (localStorage.getItem('et_sync_migrated_v2') === 'true') {
+    return;
+  }
+  
+  console.log('Running one-time sync migration to FN-UTAMA...');
+  const docRef = doc(db, 'sync', DEFAULT_SYNC_CODE);
+  try {
+    const docSnap = await getDoc(docRef);
+    let cloudTransactions = [];
+    let cloudBudgets = {};
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      cloudTransactions = data.transactions || [];
+      cloudBudgets = data.budgets || {};
+    }
+    
+    // Merge local and cloud transactions based on unique ID
+    const mergedTxs = [...transactions];
+    cloudTransactions.forEach(ctx => {
+      if (!mergedTxs.some(lx => lx.id === ctx.id)) {
+        mergedTxs.push(ctx);
+      }
+    });
+    
+    // Merge budgets
+    const mergedBudgets = { ...budgets, ...cloudBudgets };
+    
+    transactions = mergedTxs;
+    budgets = mergedBudgets;
+    
+    // Mark as migrated
+    localStorage.setItem('et_sync_migrated_v2', 'true');
+    
+    // Save the merged data locally and push to cloud
+    saveToLocalStorage(false);
+    
+    console.log('Sync migration to FN-UTAMA completed successfully.');
+  } catch (err) {
+    console.error('Failed to run sync migration:', err);
+  }
+};
+
 // Start application
-const init = () => {
+const init = async () => {
   // Ensure the selected month and year are locked into localStorage on startup
   localStorage.setItem('et_selected_month', selectedMonth);
   localStorage.setItem('et_selected_year', selectedYear);
@@ -1524,6 +1568,11 @@ const init = () => {
   populateCategoryFilterOptions('gaji');
   populateCategoryFilterOptions('jualan');
   bindEvents();
+  
+  if (syncCode === DEFAULT_SYNC_CODE && localStorage.getItem('et_sync_migrated_v2') !== 'true') {
+    await migrateToDefaultSyncCode();
+  }
+  
   setupFirebaseListener();
   initSyncCodeUI();
   renderAll();
