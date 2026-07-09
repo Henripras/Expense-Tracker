@@ -77,6 +77,35 @@
         </div>
       </header>
 
+      <!-- Cloud Sync Panel -->
+      <section id="sync-panel" class="panel" style="background: rgba(99, 102, 241, 0.05); border-color: rgba(99, 102, 241, 0.25); padding: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <span style="font-size: 1.5rem;">☁️</span>
+          <div>
+            <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary);">Sinkronisasi Cloud</h3>
+            <p style="font-size: 0.75rem; color: var(--text-secondary);">Hubungkan Website &amp; APK agar data sinkron secara real-time</p>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;">
+          <!-- Display current Sync Code -->
+          <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+            <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Kode Sinkronisasi Perangkat</span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span id="sync-code-display" style="font-family: monospace; font-size: 1.05rem; font-weight: 700; color: #818cf8; background: rgba(99, 102, 241, 0.15); padding: 0.25rem 0.5rem; border-radius: 6px; letter-spacing: 0.05em;">FN-XXXXXX</span>
+              <button id="btn-copy-sync-code" class="btn btn-outline btn-icon" title="Salin Kode Sinkronisasi" style="width: 28px; height: 28px; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; border-radius: 6px;">📋</button>
+            </div>
+          </div>
+          <!-- Enter another Sync Code -->
+          <div style="display: flex; align-items: flex-end; gap: 0.5rem;">
+            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+              <label for="input-sync-code" style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Hubungkan Kode Lain</label>
+              <input type="text" id="input-sync-code" placeholder="FN-XXXXXX" class="form-control" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; height: 28px; width: 130px; font-family: monospace; text-transform: uppercase;" />
+            </div>
+            <button id="btn-connect-sync" class="btn btn-primary" style="height: 28px; padding: 0 0.75rem; font-size: 0.75rem; border-radius: 8px;">Hubungkan</button>
+          </div>
+        </div>
+      </section>
+
       <!-- ================= SECTION 1: KEUNGAN GAJI ================= -->
       <section class="panel" style="background: rgba(30, 41, 59, 0.2); border-color: rgba(99, 102, 241, 0.15); margin-top: 1rem;">
         <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">

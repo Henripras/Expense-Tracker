@@ -1,3 +1,22 @@
+import { db } from './firebase.js';
+import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
+
+// Unique Sync Code setup
+let syncCode = localStorage.getItem('et_sync_code');
+if (!syncCode) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let rand = '';
+  for (let i = 0; i < 6; i++) {
+    rand += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  syncCode = `FN-${rand}`;
+  localStorage.setItem('et_sync_code', syncCode);
+}
+
+let lastSyncTimestamp = Number(localStorage.getItem('et_last_sync_time') || '0');
+let unsubscribeSync = null;
+let isUpdatingFromSync = false;
+
 // Preset Categories
 const CATEGORIES = {
   income: [
@@ -344,10 +363,159 @@ const inputDate = document.getElementById('input-date');
 const inputCategory = document.getElementById('input-category');
 const inputNotes = document.getElementById('input-notes');
 
-// Save states to localstorage
-const saveToLocalStorage = () => {
+// Save states to localstorage and sync to cloud
+const saveToLocalStorage = (skipCloudSync = false) => {
   localStorage.setItem('et_transactions', JSON.stringify(transactions));
   localStorage.setItem('et_budgets', JSON.stringify(budgets));
+  
+  if (!skipCloudSync && syncCode) {
+    const nowTime = Date.now();
+    lastSyncTimestamp = nowTime;
+    localStorage.setItem('et_last_sync_time', String(nowTime));
+    
+    // Save to Firestore
+    const docRef = doc(db, 'sync', syncCode);
+    setDoc(docRef, {
+      transactions,
+      budgets,
+      updatedAt: nowTime
+    }).catch(err => {
+      console.error('Failed to sync to cloud:', err);
+    });
+  }
+};
+
+const setupFirebaseListener = () => {
+  if (unsubscribeSync) {
+    unsubscribeSync();
+  }
+  
+  const docRef = doc(db, 'sync', syncCode);
+  unsubscribeSync = onSnapshot(docRef, (docSnap) => {
+    if (isUpdatingFromSync) return;
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const cloudUpdatedAt = data.updatedAt || 0;
+      
+      // Only update local if cloud is newer than local state
+      if (cloudUpdatedAt > lastSyncTimestamp) {
+        console.log('Syncing updates from cloud database...');
+        isUpdatingFromSync = true;
+        
+        transactions = data.transactions || [];
+        budgets = data.budgets || {};
+        lastSyncTimestamp = cloudUpdatedAt;
+        
+        localStorage.setItem('et_last_sync_time', String(cloudUpdatedAt));
+        saveToLocalStorage(true); // Save to local but skip pushing back to cloud
+        
+        renderAll();
+        
+        isUpdatingFromSync = false;
+      }
+    } else {
+      // Document does not exist on cloud yet, push initial local data
+      console.log('Initializing cloud sync document with local state...');
+      saveToLocalStorage(false);
+    }
+  }, (err) => {
+    console.error('Firestore listener error:', err);
+  });
+};
+
+const connectToSyncCode = async (newCode) => {
+  newCode = newCode.trim().toUpperCase();
+  if (!newCode.startsWith('FN-') || newCode.length !== 9) {
+    alert('Format Kode Sinkronisasi salah! Contoh: FN-A1B2C3');
+    return;
+  }
+  
+  if (confirm(`Apakah Anda yakin ingin menyinkronkan dengan perangkat "${newCode}"? Data lokal saat ini akan digabungkan dengan data dari cloud.`)) {
+    const docRef = doc(db, 'sync', newCode);
+    try {
+      const docSnap = await getDoc(docRef);
+      let cloudTransactions = [];
+      let cloudBudgets = {};
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        cloudTransactions = data.transactions || [];
+        cloudBudgets = data.budgets || {};
+      }
+      
+      // Merge unique transactions
+      const mergedTxs = [...transactions];
+      cloudTransactions.forEach(ctx => {
+        if (!mergedTxs.some(lx => lx.id === ctx.id)) {
+          mergedTxs.push(ctx);
+        }
+      });
+      
+      // Merge budgets
+      const mergedBudgets = { ...budgets, ...cloudBudgets };
+      
+      transactions = mergedTxs;
+      budgets = mergedBudgets;
+      syncCode = newCode;
+      
+      localStorage.setItem('et_sync_code', syncCode);
+      localStorage.setItem('et_initialized', 'true');
+      
+      saveToLocalStorage(false); 
+      setupFirebaseListener();
+      
+      document.getElementById('sync-code-display').innerText = syncCode;
+      document.getElementById('input-sync-code').value = '';
+      alert(`Berhasil terhubung ke perangkat: ${syncCode}! Data telah disinkronkan.`);
+      
+      renderAll();
+    } catch (err) {
+      console.error('Failed to connect sync code:', err);
+      alert('Gagal menghubungkan ke database cloud. Pastikan internet Anda aktif.');
+    }
+  }
+};
+
+const initSyncCodeUI = () => {
+  const syncDisplay = document.getElementById('sync-code-display');
+  const btnCopySync = document.getElementById('btn-copy-sync-code');
+  const btnConnectSync = document.getElementById('btn-connect-sync');
+  const inputSyncCode = document.getElementById('input-sync-code');
+
+  if (syncDisplay) {
+    syncDisplay.innerText = syncCode;
+  }
+
+  if (btnCopySync) {
+    btnCopySync.addEventListener('click', () => {
+      navigator.clipboard.writeText(syncCode)
+        .then(() => {
+          alert('Kode Sinkronisasi berhasil disalin ke clipboard!');
+        })
+        .catch(err => {
+          console.error('Failed to copy text: ', err);
+          const tempInput = document.createElement('input');
+          tempInput.value = syncCode;
+          document.body.appendChild(tempInput);
+          tempInput.select();
+          document.execCommand('copy');
+          document.body.removeChild(tempInput);
+          alert('Kode Sinkronisasi berhasil disalin!');
+        });
+    });
+  }
+
+  if (btnConnectSync && inputSyncCode) {
+    btnConnectSync.addEventListener('click', () => {
+      const code = inputSyncCode.value;
+      if (!code) {
+        alert('Masukkan Kode Sinkronisasi tujuan terlebih dahulu!');
+        return;
+      }
+      connectToSyncCode(code);
+    });
+  }
 };
 
 // Initialize Year Dropdowns
@@ -1355,6 +1523,8 @@ const init = () => {
   populateCategoryFilterOptions('gaji');
   populateCategoryFilterOptions('jualan');
   bindEvents();
+  setupFirebaseListener();
+  initSyncCodeUI();
   renderAll();
 };
 
