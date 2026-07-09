@@ -11,30 +11,6 @@
     <link rel="stylesheet" href="./src/index.css" />
   </head>
   <body>
-    <!-- Premium Startup Splash Screen -->
-    <div id="app-splash" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0b0f19; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99999; transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), transform 0.5s cubic-bezier(0.4, 0, 0.2, 1); transform: scale(1);">
-      <div style="display: flex; flex-direction: column; align-items: center; gap: 1.5rem;">
-        <!-- Glowing SVG Logo -->
-        <svg class="splash-logo" width="96" height="96" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: pulse-glow 2s infinite ease-in-out;">
-          <defs>
-            <linearGradient id="splash-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#818cf8" />
-              <stop offset="100%" stop-color="#10b981" />
-            </linearGradient>
-          </defs>
-          <rect x="5" y="5" width="90" height="90" rx="24" fill="#1e1b4b" stroke="url(#splash-grad)" stroke-width="4"/>
-          <path d="M25 65 L45 50 L65 55 L75 35" stroke="#10b981" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
-          <path d="M70 35 H75 V40" stroke="#10b981" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
-          <path d="M35 30 H65 M35 48 H55 M35 30 V70" stroke="#818cf8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <!-- Brand Name -->
-        <h1 style="font-size: 2.25rem; font-weight: 700; letter-spacing: 0.05em; background: linear-gradient(135deg, #818cf8 0%, #10b981 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; animation: fade-in-up 0.8s ease-out; font-family: var(--font-sans);">Finansiku</h1>
-        <!-- Modern Loading Indicator -->
-        <div style="width: 140px; height: 3px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.03);">
-          <div style="width: 100%; height: 100%; background: linear-gradient(to right, #818cf8, #10b981); animation: loading-fill 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards; transform-origin: left;"></div>
-        </div>
-      </div>
-    </div>
     <div id="root">
       <!-- App Header -->
       <header class="app-header">
