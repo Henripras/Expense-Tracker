@@ -1583,6 +1583,18 @@ const init = async () => {
   setupFirebaseListener();
   initSyncCodeUI();
   renderAll();
+  
+  // Hide premium splash screen with smooth transition
+  setTimeout(() => {
+    const splash = document.getElementById('app-splash');
+    if (splash) {
+      splash.style.opacity = '0';
+      splash.style.transform = 'scale(1.05)';
+      setTimeout(() => {
+        splash.style.display = 'none';
+      }, 500); // Match CSS transition duration
+    }
+  }, 1800); // Show splash animation for 1.8s
 };
 
 if (document.readyState === 'loading') {

@@ -1014,3 +1014,43 @@ option {
     font-size: 1.25rem;
   }
 }
+
+/* Premium Startup Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.9;
+    filter: drop-shadow(0 0 15px rgba(129, 140, 248, 0.35));
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+    filter: drop-shadow(0 0 30px rgba(16, 185, 129, 0.5));
+  }
+}
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes loading-fill {
+  0% {
+    transform: scaleX(0);
+  }
+  30% {
+    transform: scaleX(0.25);
+  }
+  60% {
+    transform: scaleX(0.65);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
