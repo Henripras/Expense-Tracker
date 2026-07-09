@@ -1594,7 +1594,7 @@ const init = async () => {
         splash.style.display = 'none';
       }, 500); // Match CSS transition duration
     }
-  }, 1800); // Show splash animation for 1.8s
+  }, 800); // Show splash animation for 0.8s
 };
 
 if (document.readyState === 'loading') {
