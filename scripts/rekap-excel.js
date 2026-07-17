@@ -165,15 +165,12 @@ async function main() {
     process.exit(1);
   }
 
-  // Filter Gaji & Jualan Transactions for target month
-  const filterTxs = (acc) => transactions.filter(t => {
+  // Filter Gaji Transactions for target month
+  const txsGaji = transactions.filter(t => {
     const [tYear, tMonth] = t.date.split('-');
     const tAcc = t.account || 'gaji';
-    return tYear === String(year) && tMonth === month && tAcc === acc;
+    return tYear === String(year) && tMonth === month && tAcc === 'gaji';
   });
-
-  const txsGaji = filterTxs('gaji');
-  const txsJualan = filterTxs('jualan');
 
   // Calculates aggregates
   const calcAggregates = (txList) => {
@@ -183,10 +180,7 @@ async function main() {
   };
 
   const aggGaji = calcAggregates(txsGaji);
-  const aggJualan = calcAggregates(txsJualan);
-
   const budgetGaji = budgets[`gaji_${monthKey}`] || 0;
-  const budgetJualan = budgets[`jualan_${monthKey}`] || 0;
 
   const isOverBudget = (expense, limit) => limit > 0 && expense > limit ? 'MELEBIHI LIMIT' : limit > 0 ? 'AMAN' : 'BELUM DIATUR';
 
@@ -197,34 +191,17 @@ async function main() {
     [`Tanggal Cetak: ${now.toLocaleDateString('id-ID')}`],
     [],
     ['1. RINGKASAN PEMBUKUAN'],
-    ['Pembukuan / Akun', 'Total Pemasukan', 'Total Pengeluaran', 'Saldo Bersih', 'Batas Anggaran', 'Status Anggaran'],
+    ['Total Pemasukan', 'Total Pengeluaran', 'Saldo Bersih', 'Batas Anggaran', 'Status Anggaran'],
     [
-      'Keuangan Gaji (Pribadi)',
       aggGaji.income,
       aggGaji.expense,
       aggGaji.balance,
       budgetGaji || '-',
       isOverBudget(aggGaji.expense, budgetGaji)
     ],
-    [
-      'Keuangan Jualan (Store)',
-      aggJualan.income,
-      aggJualan.expense,
-      aggJualan.balance,
-      budgetJualan || '-',
-      isOverBudget(aggJualan.expense, budgetJualan)
-    ],
-    [
-      'TOTAL GABUNGAN',
-      aggGaji.income + aggJualan.income,
-      aggGaji.expense + aggJualan.expense,
-      aggGaji.balance + aggJualan.balance,
-      budgetGaji + budgetJualan || '-',
-      '-'
-    ],
     [],
-    ['2. RINCIAN SUMBER PEMASUKAN (DARI MANA)'],
-    ['Kategori Pemasukan', 'Keuangan Gaji (Rp)', 'Keuangan Jualan (Rp)', 'Total Gabungan (Rp)']
+    ['2. RINCIAN SUMBER PEMASUKAN'],
+    ['Kategori Pemasukan', 'Total (Rp)']
   ];
 
   // Populate Income Category breakdown
@@ -237,18 +214,16 @@ async function main() {
   ];
 
   incomeCats.forEach(cat => {
-    const gajiAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-    const jualanAmt = txsJualan.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-    const totalAmt = gajiAmt + jualanAmt;
+    const totalAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
     if (totalAmt > 0) {
-      summaryRows.push([cat.label, gajiAmt, jualanAmt, totalAmt]);
+      summaryRows.push([cat.label, totalAmt]);
     }
   });
 
   summaryRows.push(
     [],
-    ['3. RINCIAN POS PENGELUARAN (KE MANA SAJA)'],
-    ['Kategori Pengeluaran', 'Keuangan Gaji (Rp)', 'Keuangan Jualan (Rp)', 'Total Gabungan (Rp)']
+    ['3. RINCIAN POS PENGELUARAN'],
+    ['Kategori Pengeluaran', 'Total (Rp)']
   );
 
   // Populate Expense Category breakdown
@@ -266,15 +241,13 @@ async function main() {
   ];
 
   expenseCats.forEach(cat => {
-    const gajiAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-    const jualanAmt = txsJualan.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-    const totalAmt = gajiAmt + jualanAmt;
+    const totalAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
     if (totalAmt > 0) {
-      summaryRows.push([cat.label, gajiAmt, jualanAmt, totalAmt]);
+      summaryRows.push([cat.label, totalAmt]);
     }
   });
 
-  // --- SHEET 2 & 3: DETAIL TRANSAKSI ---
+  // --- SHEET 2: DETAIL TRANSAKSI ---
   const mapTransactionRows = (txList) => {
     const headers = ['Tanggal', 'Deskripsi', 'Tipe', 'Kategori', 'Jumlah (Rp)', 'Catatan'];
     const rows = txList.map(t => [
@@ -289,7 +262,6 @@ async function main() {
   };
 
   const sheetGajiRows = mapTransactionRows(txsGaji);
-  const sheetJualanRows = mapTransactionRows(txsJualan);
 
   // Helper to apply thousands separator formatting to all numeric cells in a worksheet
   const formatNumericCells = (ws) => {
@@ -312,16 +284,12 @@ async function main() {
   formatNumericCells(wsGaji);
   XLSX.utils.book_append_sheet(wb, wsGaji, 'Transaksi Gaji');
 
-  const wsJualan = XLSX.utils.aoa_to_sheet(sheetJualanRows);
-  formatNumericCells(wsJualan);
-  XLSX.utils.book_append_sheet(wb, wsJualan, 'Transaksi Jualan');
-
   // Generate output file inside 'Rekaptulasi' directory
   const outputDir = path.resolve('Rekaptulasi');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
-  const filename = `Total Rekaptulasi - ${monthLabel}.xlsx`;
+  const filename = `Rekaptulasi Keuangan - ${monthLabel}.xlsx`;
   const outputPath = path.join(outputDir, filename);
   XLSX.writeFile(wb, outputPath);
 
@@ -332,8 +300,6 @@ async function main() {
   console.log('======================================');
   console.log(`Ringkasan ${monthLabel}:`);
   console.log(`- Gaji   | Pemasukan: ${formatIDR(aggGaji.income)} | Pengeluaran: ${formatIDR(aggGaji.expense)} | Saldo: ${formatIDR(aggGaji.balance)}`);
-  console.log(`- Jualan | Pemasukan: ${formatIDR(aggJualan.income)} | Pengeluaran: ${formatIDR(aggJualan.expense)} | Saldo: ${formatIDR(aggJualan.balance)}`);
-  console.log(`- Total  | Saldo Bersih Gabungan: ${formatIDR(aggGaji.balance + aggJualan.balance)}`);
   console.log('======================================');
 }
 

@@ -117,88 +117,6 @@ const getSeedTransactions = () => {
       date: `${year}-${month}-20`,
       notes: 'Beli tiket IMAX & popcorn.',
       account: 'gaji'
-    },
-
-    // --- AKUN JUALAN (Store Business) ---
-    {
-      id: 'jualan-seed-1',
-      description: 'Penjualan Produk Sepatu',
-      amount: 8500000,
-      type: 'income',
-      category: 'freelance',
-      date: `${year}-${month}-03`,
-      notes: 'Pesanan grosir 10 pasang sepatu.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-2',
-      description: 'Omset Harian Marketplace',
-      amount: 6200000,
-      type: 'income',
-      category: 'freelance',
-      date: `${year}-${month}-12`,
-      notes: 'Pencairan saldo Shopee & Tokopedia.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-3',
-      description: 'Pemasukan Agen Reseller',
-      amount: 3800000,
-      type: 'income',
-      category: 'freelance',
-      date: `${year}-${month}-22`,
-      notes: 'Setoran penjualan reseller Bandung.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-4',
-      description: 'Kulakan Bahan Baku Sepatu',
-      amount: 4200000,
-      type: 'expense',
-      category: 'belanja',
-      date: `${year}-${month}-04`,
-      notes: 'Beli kulit sintetis & sol karet.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-5',
-      description: 'Ongkir Ekspedisi Pengiriman',
-      amount: 850000,
-      type: 'expense',
-      category: 'transportasi',
-      date: `${year}-${month}-08`,
-      notes: 'Ongkos kirim paket pelanggan J&T.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-6',
-      description: 'Biaya Iklan Facebook Ads',
-      amount: 1200000,
-      type: 'expense',
-      category: 'lain-lain-out',
-      date: `${year}-${month}-15`,
-      notes: 'Iklan kampanye iklan produk baru.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-7',
-      description: 'Beli Dus & Lakban Packing',
-      amount: 600000,
-      type: 'expense',
-      category: 'belanja',
-      date: `${year}-${month}-18`,
-      notes: 'Kardus packing ukuran sedang.',
-      account: 'jualan'
-    },
-    {
-      id: 'jualan-seed-8',
-      description: 'Perpanjangan Hosting Toko Online',
-      amount: 350000,
-      type: 'expense',
-      category: 'tagihan',
-      date: `${year}-${month}-20`,
-      notes: 'Sewa server website domain.',
-      account: 'jualan'
     }
   ];
 };
@@ -207,8 +125,7 @@ const getSeedBudgets = () => {
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   return {
-    [`gaji_${monthKey}`]: 6000000,
-    [`jualan_${monthKey}`]: 10000000
+    [`gaji_${monthKey}`]: 6000000
   };
 };
 
@@ -261,10 +178,11 @@ if (!selectedMonth || !selectedYear) {
 
 // Form Editing Temp State
 let editingTxId = null;
+let editingTxYear = null;
+let editingTxMonth = null;
 let currentFormType = 'expense';
 const hoveredCategory = {
-  gaji: null,
-  jualan: null
+  gaji: null
 };
 
 // Helpers
@@ -944,73 +862,11 @@ const updateDonutLabels = (acc, categoryData, totalExpense) => {
   dom.pctCenter.style.color = 'var(--text-secondary)';
 };
 
-const renderGrandTotal = (filteredGaji, filteredJualan, budgetGaji, budgetJualan) => {
-  const totalGajiIncome = filteredGaji.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-  const totalGajiExpense = filteredGaji.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-
-  const totalJualanIncome = filteredJualan.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-  const totalJualanExpense = filteredJualan.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-
-  const grandIncome = totalGajiIncome + totalJualanIncome;
-  const grandExpense = totalGajiExpense + totalJualanExpense;
-  const grandBalance = grandIncome - grandExpense;
-  const grandBudget = budgetGaji + budgetJualan;
-
-  document.getElementById('val-grand-income').innerText = formatIDR(grandIncome);
-  document.getElementById('val-grand-expense').innerText = formatIDR(grandExpense);
-  document.getElementById('val-grand-balance').innerText = formatIDR(grandBalance);
-
-  const balCard = document.getElementById('card-grand-balance');
-  if (grandBalance >= 0) {
-    document.getElementById('val-grand-balance').style.color = 'var(--income)';
-    balCard.style.borderColor = 'rgba(16, 185, 129, 0.3)';
-    balCard.style.background = 'rgba(16, 185, 129, 0.03)';
-  } else {
-    document.getElementById('val-grand-balance').style.color = 'var(--expense)';
-    balCard.style.borderColor = 'rgba(244, 63, 94, 0.3)';
-    balCard.style.background = 'rgba(244, 63, 94, 0.03)';
-  }
-
-  const progressSec = document.getElementById('grand-budget-progress-sec');
-  const fill = document.getElementById('grand-budget-progress-fill');
-  const percentText = document.getElementById('grand-budget-percent-text');
-  const statusText = document.getElementById('grand-budget-status-text');
-
-  if (grandBudget > 0) {
-    document.getElementById('val-grand-budget').innerText = formatIDR(grandBudget);
-    progressSec.style.display = 'block';
-
-    const percent = Math.min((grandExpense / grandBudget) * 100, 100);
-    percentText.innerText = `${percent.toFixed(0)}%`;
-    fill.style.width = `${percent}%`;
-
-    const isOver = grandExpense > grandBudget;
-    const isNear = !isOver && (grandExpense / grandBudget) >= 0.85;
-
-    if (isOver) {
-      fill.style.backgroundColor = 'var(--expense)';
-      statusText.innerText = 'Gabungan Melebihi Anggaran!';
-      statusText.style.color = 'var(--expense)';
-    } else if (isNear) {
-      fill.style.backgroundColor = 'var(--warning)';
-      statusText.innerText = 'Gabungan Mendekati Batas!';
-      statusText.style.color = 'var(--warning)';
-    } else {
-      fill.style.backgroundColor = 'var(--primary)';
-      statusText.innerText = 'Pemakaian Anggaran Gabungan';
-      statusText.style.color = 'var(--text-secondary)';
-    }
-  } else {
-    document.getElementById('val-grand-budget').innerText = 'Belum Diatur';
-    progressSec.style.display = 'none';
-  }
-};
-
-// Render Main Controller (Runs Gaji and Jualan independently)
+// Render Main Controller (Runs Gaji independently)
 const renderAll = () => {
   const monthKey = `${selectedYear}-${selectedMonth}`;
 
-  // 1. Process Gaji
+  // Process Gaji
   const filteredGaji = transactions.filter(t => {
     const [tYear, tMonth] = t.date.split('-');
     const tAcc = t.account || 'gaji';
@@ -1020,20 +876,6 @@ const renderAll = () => {
   renderDashboard('gaji', filteredGaji, budgetGaji);
   renderTransactions('gaji', filteredGaji);
   renderAnalytics('gaji', filteredGaji);
-
-  // 2. Process Jualan
-  const filteredJualan = transactions.filter(t => {
-    const [tYear, tMonth] = t.date.split('-');
-    const tAcc = t.account || 'gaji';
-    return tYear === selectedYear && tMonth === selectedMonth && tAcc === 'jualan';
-  });
-  const budgetJualan = budgets[`jualan_${monthKey}`] || 0;
-  renderDashboard('jualan', filteredJualan, budgetJualan);
-  renderTransactions('jualan', filteredJualan);
-  renderAnalytics('jualan', filteredJualan);
-
-  // 3. Process Consolidated Grand Total
-  renderGrandTotal(filteredGaji, filteredJualan, budgetGaji, budgetJualan);
 };
 
 // Form Management (Modal Dialog)
@@ -1069,19 +911,37 @@ const openFormModal = (editData = null) => {
     inputAccount.value = editData.account || 'gaji';
     inputDescription.value = editData.description;
     inputAmount.value = formatNumberInput(String(editData.amount));
-    inputDate.value = editData.date;
+    
+    // Parse day from date
+    const dateParts = editData.date.split('-');
+    editingTxYear = dateParts[0];
+    editingTxMonth = dateParts[1];
+    inputDate.value = parseInt(dateParts[2], 10);
+    
     inputNotes.value = editData.notes || '';
     
     populateModalCategories(editData.type);
     inputCategory.value = editData.category;
   } else {
     editingTxId = null;
+    editingTxYear = null;
+    editingTxMonth = null;
     modalTitle.innerText = 'Tambah Transaksi';
     currentFormType = 'expense';
     inputAccount.value = 'gaji';
     inputDescription.value = '';
     inputAmount.value = '';
-    inputDate.value = getLocalDateString();
+    
+    // Default to active session day if it matches today's month/year
+    const today = new Date();
+    const todayYear = String(today.getFullYear());
+    const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+    if (selectedYear === todayYear && selectedMonth === todayMonth) {
+      inputDate.value = today.getDate();
+    } else {
+      inputDate.value = 1;
+    }
+    
     inputNotes.value = '';
     
     populateModalCategories('expense');
@@ -1158,8 +1018,8 @@ const bindEvents = () => {
     renderAll();
   });
 
-  // Gaji & Jualan Budget Edit/Save/Cancel
-  ['gaji', 'jualan'].forEach(acc => {
+  // Gaji Budget Edit/Save/Cancel
+  ['gaji'].forEach(acc => {
     const dom = getDomForAccount(acc);
     
     dom.btnEditBudget.addEventListener('click', () => {
@@ -1248,7 +1108,7 @@ const bindEvents = () => {
     const acc = inputAccount.value;
     const desc = inputDescription.value.trim();
     const amt = getRawNumber(inputAmount.value);
-    const dt = inputDate.value;
+    const dt = parseInt(inputDate.value, 10);
     const cat = inputCategory.value;
     const nts = inputNotes.value.trim();
 
@@ -1264,20 +1124,25 @@ const bindEvents = () => {
       document.getElementById('err-amount').style.display = 'block';
       hasError = true;
     }
-    if (!dt) {
-      document.getElementById('err-date').innerText = 'Tanggal harus dipilih.';
+    if (isNaN(dt) || dt < 1 || dt > 31) {
+      document.getElementById('err-date').innerText = 'Tanggal harus diisi antara 1 sampai 31.';
       document.getElementById('err-date').style.display = 'block';
       hasError = true;
     }
 
     if (hasError) return;
 
+    // Construct full date string based on active session or editing data
+    const targetYear = editingTxId ? editingTxYear : selectedYear;
+    const targetMonth = editingTxId ? editingTxMonth : selectedMonth;
+    const dateStr = `${targetYear}-${targetMonth}-${String(dt).padStart(2, '0')}`;
+
     const payload = {
       description: desc,
       amount: amt,
       type: currentFormType,
       category: cat,
-      date: dt,
+      date: dateStr,
       notes: nts,
       account: acc
     };
@@ -1311,12 +1176,6 @@ const bindEvents = () => {
       return tYear === year && tMonth === month && tAcc === 'gaji';
     });
 
-    const txsJualan = transactions.filter(t => {
-      const [tYear, tMonth] = t.date.split('-');
-      const tAcc = t.account || 'gaji';
-      return tYear === year && tMonth === month && tAcc === 'jualan';
-    });
-
     const calcAggregates = (txList) => {
       const income = txList.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
       const expense = txList.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
@@ -1324,10 +1183,7 @@ const bindEvents = () => {
     };
 
     const aggGaji = calcAggregates(txsGaji);
-    const aggJualan = calcAggregates(txsJualan);
-
     const budgetGaji = budgets[`gaji_${monthKey}`] || 0;
-    const budgetJualan = budgets[`jualan_${monthKey}`] || 0;
 
     const isOverBudget = (expense, limit) => limit > 0 && expense > limit ? 'MELEBIHI LIMIT' : limit > 0 ? 'AMAN' : 'BELUM DIATUR';
 
@@ -1355,34 +1211,17 @@ const bindEvents = () => {
       [`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')}`],
       [],
       ['1. RINGKASAN PEMBUKUAN'],
-      ['Pembukuan / Akun', 'Total Pemasukan', 'Total Pengeluaran', 'Saldo Bersih', 'Batas Anggaran', 'Status Anggaran'],
+      ['Total Pemasukan', 'Total Pengeluaran', 'Saldo Bersih', 'Batas Anggaran', 'Status Anggaran'],
       [
-        'Keuangan Gaji (Pribadi)',
         aggGaji.income,
         aggGaji.expense,
         aggGaji.balance,
         budgetGaji || '-',
         isOverBudget(aggGaji.expense, budgetGaji)
       ],
-      [
-        'Keuangan Jualan (Store)',
-        aggJualan.income,
-        aggJualan.expense,
-        aggJualan.balance,
-        budgetJualan || '-',
-        isOverBudget(aggJualan.expense, budgetJualan)
-      ],
-      [
-        'TOTAL GABUNGAN',
-        aggGaji.income + aggJualan.income,
-        aggGaji.expense + aggJualan.expense,
-        aggGaji.balance + aggJualan.balance,
-        budgetGaji + budgetJualan || '-',
-        '-'
-      ],
       [],
-      ['2. RINCIAN SUMBER PEMASUKAN (DARI MANA)'],
-      ['Kategori Pemasukan', 'Keuangan Gaji (Rp)', 'Keuangan Jualan (Rp)', 'Total Gabungan (Rp)']
+      ['2. RINCIAN SUMBER PEMASUKAN'],
+      ['Kategori Pemasukan', 'Total (Rp)']
     ];
 
     // Populate Income Category breakdown
@@ -1395,18 +1234,16 @@ const bindEvents = () => {
     ];
 
     incomeCats.forEach(cat => {
-      const gajiAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-      const jualanAmt = txsJualan.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
-      const totalAmt = gajiAmt + jualanAmt;
+      const totalAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
       if (totalAmt > 0) {
-        summaryRows.push([cat.label, gajiAmt, jualanAmt, totalAmt]);
+        summaryRows.push([cat.label, totalAmt]);
       }
     });
 
     summaryRows.push(
       [],
-      ['3. RINCIAN POS PENGELUARAN (KE MANA SAJA)'],
-      ['Kategori Pengeluaran', 'Keuangan Gaji (Rp)', 'Keuangan Jualan (Rp)', 'Total Gabungan (Rp)']
+      ['3. RINCIAN POS PENGELUARAN'],
+      ['Kategori Pengeluaran', 'Total (Rp)']
     );
 
     // Populate Expense Category breakdown
@@ -1424,11 +1261,9 @@ const bindEvents = () => {
     ];
 
     expenseCats.forEach(cat => {
-      const gajiAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-      const jualanAmt = txsJualan.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
-      const totalAmt = gajiAmt + jualanAmt;
+      const totalAmt = txsGaji.filter(t => t.category === cat.id && t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
       if (totalAmt > 0) {
-        summaryRows.push([cat.label, gajiAmt, jualanAmt, totalAmt]);
+        summaryRows.push([cat.label, totalAmt]);
       }
     });
 
@@ -1447,7 +1282,6 @@ const bindEvents = () => {
     };
 
     const sheetGajiRows = mapTransactionRows(txsGaji);
-    const sheetJualanRows = mapTransactionRows(txsJualan);
 
     // --- CREATE WORKBOOK & WRITE ---
     const wb = XLSX.utils.book_new();
@@ -1470,12 +1304,8 @@ const bindEvents = () => {
     formatNumericCells(wsGaji);
     XLSX.utils.book_append_sheet(wb, wsGaji, 'Transaksi Gaji');
 
-    const wsJualan = XLSX.utils.aoa_to_sheet(sheetJualanRows);
-    formatNumericCells(wsJualan);
-    XLSX.utils.book_append_sheet(wb, wsJualan, 'Transaksi Jualan');
-
     // Trigger Excel file download
-    const filename = `Total Rekaptulasi - ${monthLabel}.xlsx`;
+    const filename = `Rekaptulasi Keuangan - ${monthLabel}.xlsx`;
     XLSX.writeFile(wb, filename);
   });
 
@@ -1573,7 +1403,6 @@ const init = async () => {
 
   initSelectors();
   populateCategoryFilterOptions('gaji');
-  populateCategoryFilterOptions('jualan');
   bindEvents();
   
   setupFirebaseListener();
