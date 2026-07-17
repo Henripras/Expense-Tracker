@@ -932,14 +932,19 @@ const openFormModal = (editData = null) => {
     inputDescription.value = '';
     inputAmount.value = '';
     
-    // Default to active session day if it matches today's month/year
-    const today = new Date();
-    const todayYear = String(today.getFullYear());
-    const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
-    if (selectedYear === todayYear && selectedMonth === todayMonth) {
-      inputDate.value = today.getDate();
+    // Default to last entered day if exists, otherwise today's date or 1
+    const lastEnteredDay = localStorage.getItem('et_last_entered_day');
+    if (lastEnteredDay) {
+      inputDate.value = parseInt(lastEnteredDay, 10);
     } else {
-      inputDate.value = 1;
+      const today = new Date();
+      const todayYear = String(today.getFullYear());
+      const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+      if (selectedYear === todayYear && selectedMonth === todayMonth) {
+        inputDate.value = today.getDate();
+      } else {
+        inputDate.value = 1;
+      }
     }
     
     inputNotes.value = '';
@@ -1131,6 +1136,9 @@ const bindEvents = () => {
     }
 
     if (hasError) return;
+
+    // Persist last entered day for subsequent transactions
+    localStorage.setItem('et_last_entered_day', String(dt));
 
     // Construct full date string based on active session or editing data
     const targetYear = editingTxId ? editingTxYear : selectedYear;
