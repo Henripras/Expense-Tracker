@@ -10,7 +10,7 @@ process.env.JAVA_HOME = jdkPath;
 process.env.ANDROID_HOME = sdkPath;
 
 console.log('=========================================');
-console.log('Building Android APK (Finansiku)...');
+console.log('Building Android APK (Expense Tracker)...');
 console.log('JAVA_HOME:', process.env.JAVA_HOME);
 console.log('ANDROID_HOME:', process.env.ANDROID_HOME);
 console.log('=========================================');
@@ -31,11 +31,13 @@ gradle.on('close', (code) => {
     
     // Copy the APK to the root of the project
     const sourceApk = path.resolve('android/app/build/outputs/apk/debug/app-debug.apk');
-    const destApk = path.resolve('Finansiku-debug.apk');
+    const destApk = path.resolve('ExpenseTracker-debug.apk');
+    const destApkOld = path.resolve('Finansiku-debug.apk');
     
     if (fs.existsSync(sourceApk)) {
       try {
         fs.copyFileSync(sourceApk, destApk);
+        fs.copyFileSync(sourceApk, destApkOld);
         console.log(`APK successfully copied to: ${destApk}`);
       } catch (err) {
         console.error('Failed to copy APK to root:', err.message);

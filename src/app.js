@@ -1,20 +1,18 @@
-import { db } from './firebase.js';
-import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
+import { getSupabaseClient, getSupabaseConfig, setSupabaseConfig } from './supabase.js';
 
 // Unique Sync Code setup
 const DEFAULT_SYNC_CODE = 'FN-UTAMA';
 let syncCode = localStorage.getItem('et_sync_code');
 const isCustomized = localStorage.getItem('et_sync_customized') === 'true';
 
-// If no sync code is set, or if the user is using a legacy random code and hasn't customized it,
-// we default to 'FN-UTAMA' so that all their devices automatically sync out-of-the-box.
+// Default to 'FN-UTAMA' so all devices automatically sync out-of-the-box
 if (!syncCode || (!isCustomized && syncCode !== DEFAULT_SYNC_CODE)) {
   syncCode = DEFAULT_SYNC_CODE;
   localStorage.setItem('et_sync_code', syncCode);
 }
 
 let lastSyncTimestamp = Number(localStorage.getItem('et_last_sync_time') || '0');
-let unsubscribeSync = null;
+let supabaseRealtimeChannel = null;
 let isUpdatingFromSync = false;
 
 // Preset Categories
@@ -136,12 +134,20 @@ let transactions = [];
 let budgets = {};
 
 if (hasInitialized) {
-  transactions = localStorage.getItem('et_transactions') 
-    ? JSON.parse(localStorage.getItem('et_transactions')) 
-    : [];
-  budgets = localStorage.getItem('et_budgets') 
-    ? JSON.parse(localStorage.getItem('et_budgets')) 
-    : {};
+  try {
+    const rawTx = localStorage.getItem('et_transactions');
+    transactions = rawTx ? JSON.parse(rawTx) : [];
+  } catch (e) {
+    console.warn('Failed to parse transactions, falling back to seed:', e);
+    transactions = getSeedTransactions();
+  }
+  try {
+    const rawBg = localStorage.getItem('et_budgets');
+    budgets = rawBg ? JSON.parse(rawBg) : {};
+  } catch (e) {
+    console.warn('Failed to parse budgets, falling back to seed:', e);
+    budgets = getSeedBudgets();
+  }
 } else {
   // First time load: use seed data
   transactions = getSeedTransactions();
@@ -256,150 +262,247 @@ const getDomForAccount = (acc) => {
   };
 };
 
-const selectMonth = document.getElementById('select-month');
-const selectYear = document.getElementById('select-year');
-const btnPrevMonth = document.getElementById('btn-prev-month');
-const btnNextMonth = document.getElementById('btn-next-month');
+let selectMonth, selectYear, btnPrevMonth, btnNextMonth;
+let btnExport, btnImport, importFileInput, btnAddTransaction;
+let transactionModal, modalTitle, btnCloseModal, btnCancelModal;
+let btnTypeIncome, btnTypeExpense, transactionForm;
+let inputTxId, inputAccount, inputDescription, inputAmount, inputDate, inputCategory, inputNotes;
 
-const btnExport = document.getElementById('btn-export');
-const btnImport = document.getElementById('btn-import');
-const importFileInput = document.getElementById('import-file-input');
-const btnAddTransaction = document.getElementById('btn-add-transaction');
+const refreshDomElements = () => {
+  selectMonth = document.getElementById('select-month');
+  selectYear = document.getElementById('select-year');
+  btnPrevMonth = document.getElementById('btn-prev-month');
+  btnNextMonth = document.getElementById('btn-next-month');
 
-const transactionModal = document.getElementById('transaction-modal');
-const modalTitle = document.getElementById('modal-title');
-const btnCloseModal = document.getElementById('btn-close-modal');
-const btnCancelModal = document.getElementById('btn-cancel-modal');
-const btnTypeIncome = document.getElementById('btn-type-income');
-const btnTypeExpense = document.getElementById('btn-type-expense');
-const transactionForm = document.getElementById('transaction-form');
-const inputTxId = document.getElementById('input-tx-id');
-const inputAccount = document.getElementById('input-account');
-const inputDescription = document.getElementById('input-description');
-const inputAmount = document.getElementById('input-amount');
-const inputDate = document.getElementById('input-date');
-const inputCategory = document.getElementById('input-category');
-const inputNotes = document.getElementById('input-notes');
+  btnExport = document.getElementById('btn-export');
+  btnImport = document.getElementById('btn-import');
+  importFileInput = document.getElementById('import-file-input');
+  btnAddTransaction = document.getElementById('btn-add-transaction');
 
-// Save states to localstorage and sync to cloud
-const saveToLocalStorage = (skipCloudSync = false) => {
-  localStorage.setItem('et_transactions', JSON.stringify(transactions));
-  localStorage.setItem('et_budgets', JSON.stringify(budgets));
-  
-  if (!skipCloudSync && syncCode) {
-    const nowTime = Date.now();
-    lastSyncTimestamp = nowTime;
-    localStorage.setItem('et_last_sync_time', String(nowTime));
-    
-    // Save to Firestore
-    const docRef = doc(db, 'sync', syncCode);
-    setDoc(docRef, {
-      transactions,
-      budgets,
-      updatedAt: nowTime
-    }).catch(err => {
-      console.error('Failed to sync to cloud:', err);
-    });
+  transactionModal = document.getElementById('transaction-modal');
+  modalTitle = document.getElementById('modal-title');
+  btnCloseModal = document.getElementById('btn-close-modal');
+  btnCancelModal = document.getElementById('btn-cancel-modal');
+  btnTypeIncome = document.getElementById('btn-type-income');
+  btnTypeExpense = document.getElementById('btn-type-expense');
+  transactionForm = document.getElementById('transaction-form');
+  inputTxId = document.getElementById('input-tx-id');
+  inputAccount = document.getElementById('input-account');
+  inputDescription = document.getElementById('input-description');
+  inputAmount = document.getElementById('input-amount');
+  inputDate = document.getElementById('input-date');
+  inputCategory = document.getElementById('input-category');
+  inputNotes = document.getElementById('input-notes');
+};
+
+// Initial quick grab
+if (typeof document !== 'undefined') {
+  refreshDomElements();
+}
+
+// ==========================================
+// SUPABASE REALTIME CLOUD SYNC MODULE
+// ==========================================
+const updateSupabaseStatusBadge = (status, customText = '') => {
+  const badge = document.getElementById('supabase-status-badge');
+  if (!badge) return;
+
+  badge.className = 'sync-status-badge';
+  if (status === 'online') {
+    badge.classList.add('badge-online');
+    badge.innerText = customText || '🟢 Realtime Aktif';
+  } else if (status === 'offline') {
+    badge.classList.add('badge-offline');
+    badge.innerText = customText || '🔴 Offline';
+  } else {
+    badge.classList.add('badge-warning');
+    badge.innerText = customText || '🟡 Belum Dihubungkan';
   }
 };
 
-const setupFirebaseListener = () => {
-  if (unsubscribeSync) {
-    unsubscribeSync();
+const syncToSupabase = async () => {
+  const client = getSupabaseClient();
+  if (!client || !syncCode) return;
+
+  const nowTime = Date.now();
+  lastSyncTimestamp = nowTime;
+  localStorage.setItem('et_last_sync_time', String(nowTime));
+
+  try {
+    const { error } = await client
+      .from('sync_data')
+      .upsert({
+        sync_code: syncCode,
+        transactions,
+        budgets,
+        cart_items: typeof cartItems !== 'undefined' ? cartItems : [],
+        updated_at: nowTime
+      });
+
+    if (error) {
+      console.warn('Supabase sync warning:', error.message);
+      updateSupabaseStatusBadge('warning', 'Tabel Belum Siap');
+    } else {
+      updateSupabaseStatusBadge('online');
+    }
+  } catch (err) {
+    console.error('Failed to sync to Supabase:', err);
+    updateSupabaseStatusBadge('offline', 'Koneksi Gagal');
   }
-  
-  const docRef = doc(db, 'sync', syncCode);
-  unsubscribeSync = onSnapshot(docRef, (docSnap) => {
-    if (isUpdatingFromSync) return;
-    
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      const cloudTransactions = data.transactions || [];
-      const cloudBudgets = data.budgets || {};
-      
-      const localTxsStr = localStorage.getItem('et_transactions') || '[]';
-      const localBudgetsStr = localStorage.getItem('et_budgets') || '{}';
-      
-      const cloudTxsStr = JSON.stringify(cloudTransactions);
-      const cloudBudgetsStr = JSON.stringify(cloudBudgets);
-      
-      // Compare actual data changes rather than client timestamps to prevent clock-skew sync failure
-      if (localTxsStr !== cloudTxsStr || localBudgetsStr !== cloudBudgetsStr) {
-        console.log('Syncing updates from cloud database...');
+};
+
+// Save states to localstorage
+const saveToLocalStorage = () => {
+  localStorage.setItem('et_transactions', JSON.stringify(transactions));
+  localStorage.setItem('et_budgets', JSON.stringify(budgets));
+  syncToSupabase();
+};
+
+const setupSupabaseRealtimeListener = () => {
+  const client = getSupabaseClient();
+  if (!client) {
+    updateSupabaseStatusBadge('warning', 'Belum Dihubungkan');
+    return;
+  }
+
+  if (supabaseRealtimeChannel) {
+    try {
+      client.removeChannel(supabaseRealtimeChannel);
+    } catch (e) {}
+    supabaseRealtimeChannel = null;
+  }
+
+  updateSupabaseStatusBadge('warning', 'Menghubungkan...');
+
+  // 1. Initial Fetch to get latest data from Supabase
+  client
+    .from('sync_data')
+    .select('*')
+    .eq('sync_code', syncCode)
+    .single()
+    .then(({ data, error }) => {
+      if (data && !error) {
+        const cloudTime = Number(data.updated_at) || 0;
+        const localTime = Number(localStorage.getItem('et_last_sync_time') || '0');
+
+        if (cloudTime > localTime) {
+          isUpdatingFromSync = true;
+          transactions = data.transactions || [];
+          budgets = data.budgets || {};
+          if (data.cart_items && Array.isArray(data.cart_items) && typeof cartItems !== 'undefined') {
+            cartItems = data.cart_items;
+            localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
+          }
+          lastSyncTimestamp = cloudTime;
+          localStorage.setItem('et_last_sync_time', String(lastSyncTimestamp));
+          saveToLocalStorage(true);
+          renderAll();
+          if (typeof renderCartUI === 'function') renderCartUI();
+          isUpdatingFromSync = false;
+        } else if (localTime > cloudTime || (transactions.length > 0 && (!data.transactions || data.transactions.length === 0))) {
+          syncToSupabase();
+        }
+        updateSupabaseStatusBadge('online');
+      } else if (error && error.code === 'PGRST116') {
+        // Record does not exist yet on cloud, push local
+        syncToSupabase();
+      } else if (error) {
+        console.warn('Supabase fetch notice:', error.message);
+        updateSupabaseStatusBadge('warning', 'Tabel Belum Siap');
+      }
+    })
+    .catch(err => {
+      console.warn('Initial fetch error:', err);
+    });
+
+  // 2. Realtime WebSocket subscription
+  supabaseRealtimeChannel = client
+    .channel(`realtime_${syncCode}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'sync_data',
+      filter: `sync_code=eq.${syncCode}`
+    }, (payload) => {
+      const newData = payload.new;
+      if (!newData) return;
+      if (isUpdatingFromSync) return;
+
+      const cloudTime = Number(newData.updated_at) || 0;
+      if (cloudTime > lastSyncTimestamp) {
+        console.log('⚡ Realtime update diterima dari Supabase!');
         isUpdatingFromSync = true;
-        
-        transactions = cloudTransactions;
-        budgets = cloudBudgets;
-        lastSyncTimestamp = data.updatedAt || Date.now();
-        
+        transactions = newData.transactions || [];
+        budgets = newData.budgets || {};
+        if (newData.cart_items && Array.isArray(newData.cart_items) && typeof cartItems !== 'undefined') {
+          cartItems = newData.cart_items;
+          localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
+        }
+        lastSyncTimestamp = cloudTime;
         localStorage.setItem('et_last_sync_time', String(lastSyncTimestamp));
-        saveToLocalStorage(true); // Save to local but skip pushing back to cloud
-        
+        saveToLocalStorage(true);
         renderAll();
-        
+        if (typeof renderCartUI === 'function') renderCartUI();
         isUpdatingFromSync = false;
       }
-    } else {
-      // Document does not exist on cloud yet, push initial local data
-      console.log('Initializing cloud sync document with local state...');
-      saveToLocalStorage(false);
-    }
-  }, (err) => {
-    console.error('Firestore listener error:', err);
-  });
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        updateSupabaseStatusBadge('online');
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        updateSupabaseStatusBadge('offline', 'Realtime Terputus');
+      }
+    });
 };
 
 const connectToSyncCode = async (newCode) => {
   newCode = newCode.trim().toUpperCase();
-  if (!newCode.startsWith('FN-') || newCode.length !== 9) {
-    alert('Format Kode Sinkronisasi salah! Contoh: FN-A1B2C3');
+  if (!newCode.startsWith('FN-') || newCode.length < 5) {
+    alert('Format Kode Sinkronisasi salah! Contoh: FN-UTAMA atau FN-A1B2C3');
     return;
   }
   
-  if (confirm(`Apakah Anda yakin ingin menyinkronkan dengan perangkat "${newCode}"? Data lokal saat ini akan digabungkan dengan data dari cloud.`)) {
-    const docRef = doc(db, 'sync', newCode);
-    try {
-      const docSnap = await getDoc(docRef);
-      let cloudTransactions = [];
-      let cloudBudgets = {};
-      
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        cloudTransactions = data.transactions || [];
-        cloudBudgets = data.budgets || {};
-      }
-      
-      // Merge unique transactions
-      const mergedTxs = [...transactions];
-      cloudTransactions.forEach(ctx => {
-        if (!mergedTxs.some(lx => lx.id === ctx.id)) {
-          mergedTxs.push(ctx);
+  if (confirm(`Apakah Anda yakin ingin menyinkronkan dengan kode perangkat "${newCode}"? Data lokal akan digabungkan dengan cloud.`)) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.from('sync_data').select('*').eq('sync_code', newCode).single();
+        if (data) {
+          const cloudTxs = data.transactions || [];
+          const cloudBudgets = data.budgets || {};
+          
+          // Merge unique transactions
+          const mergedTxs = [...transactions];
+          cloudTxs.forEach(ctx => {
+            if (!mergedTxs.some(lx => lx.id === ctx.id)) {
+              mergedTxs.push(ctx);
+            }
+          });
+          
+          transactions = mergedTxs;
+          budgets = { ...budgets, ...cloudBudgets };
+          if (data.cart_items && Array.isArray(data.cart_items) && typeof cartItems !== 'undefined') {
+            cartItems = data.cart_items;
+          }
         }
-      });
-      
-      // Merge budgets
-      const mergedBudgets = { ...budgets, ...cloudBudgets };
-      
-      transactions = mergedTxs;
-      budgets = mergedBudgets;
-      syncCode = newCode;
-      
-      localStorage.setItem('et_sync_code', syncCode);
-      localStorage.setItem('et_sync_customized', 'true');
-      localStorage.setItem('et_initialized', 'true');
-      
-      saveToLocalStorage(false); 
-      setupFirebaseListener();
-      
-      document.getElementById('sync-code-display').innerText = syncCode;
-      document.getElementById('input-sync-code').value = '';
-      alert(`Berhasil terhubung ke perangkat: ${syncCode}! Data telah disinkronkan.`);
-      
-      renderAll();
-    } catch (err) {
-      console.error('Failed to connect sync code:', err);
-      alert('Gagal menghubungkan ke database cloud. Pastikan internet Anda aktif.');
+      } catch (err) {
+        console.warn('Connect merge notice:', err);
+      }
     }
+    
+    syncCode = newCode;
+    localStorage.setItem('et_sync_code', syncCode);
+    localStorage.setItem('et_sync_customized', 'true');
+    saveToLocalStorage(false);
+    setupSupabaseRealtimeListener();
+    
+    const display = document.getElementById('sync-code-display');
+    if (display) display.innerText = syncCode;
+    const input = document.getElementById('input-sync-code');
+    if (input) input.value = '';
+    
+    renderAll();
+    alert(`Berhasil terhubung ke kode perangkat: ${syncCode}!`);
   }
 };
 
@@ -409,6 +512,16 @@ const initSyncCodeUI = () => {
   const btnConnectSync = document.getElementById('btn-connect-sync');
   const inputSyncCode = document.getElementById('input-sync-code');
 
+  // Supabase Settings Modal elements
+  const btnOpenSupabase = document.getElementById('btn-open-supabase-settings');
+  const btnCloseSupabase = document.getElementById('btn-close-supabase-modal');
+  const supabaseModal = document.getElementById('supabase-modal');
+  const formSupabase = document.getElementById('supabase-config-form');
+  const inputSupabaseUrl = document.getElementById('input-supabase-url');
+  const inputSupabaseKey = document.getElementById('input-supabase-anon-key');
+  const btnCopySql = document.getElementById('btn-copy-supabase-sql');
+  const btnClearSupabase = document.getElementById('btn-clear-supabase');
+
   if (syncDisplay) {
     syncDisplay.innerText = syncCode;
   }
@@ -416,19 +529,8 @@ const initSyncCodeUI = () => {
   if (btnCopySync) {
     btnCopySync.addEventListener('click', () => {
       navigator.clipboard.writeText(syncCode)
-        .then(() => {
-          alert('Kode Sinkronisasi berhasil disalin ke clipboard!');
-        })
-        .catch(err => {
-          console.error('Failed to copy text: ', err);
-          const tempInput = document.createElement('input');
-          tempInput.value = syncCode;
-          document.body.appendChild(tempInput);
-          tempInput.select();
-          document.execCommand('copy');
-          document.body.removeChild(tempInput);
-          alert('Kode Sinkronisasi berhasil disalin!');
-        });
+        .then(() => alert('Kode Sinkronisasi berhasil disalin ke clipboard!'))
+        .catch(() => alert('Kode Sinkronisasi: ' + syncCode));
     });
   }
 
@@ -442,10 +544,119 @@ const initSyncCodeUI = () => {
       connectToSyncCode(code);
     });
   }
+
+  // Supabase Modal triggers
+  if (btnOpenSupabase && supabaseModal) {
+    btnOpenSupabase.addEventListener('click', () => {
+      const cfg = getSupabaseConfig();
+      if (inputSupabaseUrl) inputSupabaseUrl.value = cfg.url;
+      if (inputSupabaseKey) inputSupabaseKey.value = cfg.anonKey;
+      supabaseModal.style.display = 'flex';
+    });
+  }
+
+  if (btnCloseSupabase && supabaseModal) {
+    btnCloseSupabase.addEventListener('click', () => {
+      supabaseModal.style.display = 'none';
+    });
+  }
+
+  if (supabaseModal) {
+    supabaseModal.addEventListener('click', (e) => {
+      if (e.target === supabaseModal) supabaseModal.style.display = 'none';
+    });
+  }
+
+  // Copy SQL Schema
+  if (btnCopySql) {
+    btnCopySql.addEventListener('click', () => {
+      const sql = `-- Buat tabel sync_data di SQL Editor Supabase
+create table if not exists public.sync_data (
+  sync_code text primary key,
+  transactions jsonb default '[]'::jsonb,
+  budgets jsonb default '{}'::jsonb,
+  cart_items jsonb default '[]'::jsonb,
+  updated_at bigint default (extract(epoch from now()) * 1000)::bigint
+);
+
+alter table public.sync_data enable row level security;
+
+drop policy if exists "Akses penuh anon untuk sync data" on public.sync_data;
+create policy "Akses penuh anon untuk sync data" on public.sync_data
+  for all to anon, authenticated using (true) with check (true);
+
+alter publication supabase_realtime add table public.sync_data;`;
+      navigator.clipboard.writeText(sql)
+        .then(() => alert('Skrip SQL berhasil disalin! Silakan jalankan di Supabase Dashboard -> SQL Editor.'))
+        .catch(() => alert('Silakan buka file supabase_schema.sql di folder proyek untuk menyalin SQL.'));
+    });
+  }
+
+  // Clear Supabase configuration
+  if (btnClearSupabase) {
+    btnClearSupabase.addEventListener('click', () => {
+      if (confirm('Hapus konfigurasi Supabase? Sinkronisasi cloud akan dinonaktifkan.')) {
+        setSupabaseConfig('', '');
+        if (inputSupabaseUrl) inputSupabaseUrl.value = '';
+        if (inputSupabaseKey) inputSupabaseKey.value = '';
+        if (supabaseModal) supabaseModal.style.display = 'none';
+        updateSupabaseStatusBadge('warning', 'Belum Dihubungkan');
+        alert('Konfigurasi Supabase dihapus.');
+      }
+    });
+  }
+
+  // Save & Test Supabase Configuration
+  if (formSupabase) {
+    formSupabase.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = (inputSupabaseUrl ? inputSupabaseUrl.value : '').trim();
+      const key = (inputSupabaseKey ? inputSupabaseKey.value : '').trim();
+
+      if (!url.startsWith('https://')) {
+        alert('Supabase Project URL harus diawali dengan https://\nContoh: https://xxxxxxxx.supabase.co');
+        return;
+      }
+
+      setSupabaseConfig(url, key);
+      const client = getSupabaseClient();
+      if (!client) {
+        alert('Gagal membuat koneksi Supabase. Periksa format URL dan Key Anda.');
+        return;
+      }
+
+      const saveBtn = document.getElementById('btn-save-supabase');
+      if (saveBtn) saveBtn.innerText = 'Menguji Koneksi...';
+
+      try {
+        const { error } = await client.from('sync_data').select('count', { count: 'exact', head: true });
+        if (error) {
+          if (error.code === '42P01' || error.message.includes('relation') || error.message.includes('does not exist')) {
+            alert('Koneksi ke Supabase BERHASIL! Namun tabel "sync_data" belum dibuat.\n\nSilakan klik tombol "Salin SQL" lalu jalankan di Supabase Dashboard -> SQL Editor.');
+          } else {
+            alert('Peringatan dari Supabase: ' + error.message);
+          }
+        } else {
+          alert('🎉 Koneksi ke Supabase BERHASIL dan tabel "sync_data" siap digunakan untuk Realtime!');
+          await syncToSupabase();
+          setupSupabaseRealtimeListener();
+          if (supabaseModal) supabaseModal.style.display = 'none';
+        }
+      } catch (err) {
+        alert('Gagal menghubungkan ke Supabase: ' + err.message);
+      } finally {
+        if (saveBtn) saveBtn.innerText = 'Test & Simpan Koneksi';
+      }
+    });
+  }
 };
 
 // Initialize Year Dropdowns
 const initSelectors = () => {
+  const selYear = document.getElementById('select-year') || selectYear;
+  const selMonth = document.getElementById('select-month') || selectMonth;
+  if (!selYear) return;
+
   const currentY = new Date().getFullYear();
   const years = [];
   for (let y = currentY - 4; y <= currentY + 4; y++) {
@@ -456,18 +667,38 @@ const initSelectors = () => {
     years.sort();
   }
 
-  selectYear.innerHTML = '';
+  selYear.innerHTML = '';
   years.forEach(y => {
     const opt = document.createElement('option');
     opt.value = y;
     opt.innerText = y;
-    opt.style.background = '#1f2937';
-    opt.style.color = 'white';
-    selectYear.appendChild(opt);
+    opt.style.background = '#1a3d58';
+    opt.style.color = '#f2f2ef';
+    selYear.appendChild(opt);
   });
   
-  selectMonth.value = selectedMonth;
-  selectYear.value = selectedYear;
+  if (selMonth) selMonth.value = selectedMonth;
+  selYear.value = selectedYear;
+};
+
+// Global Month Navigation
+window.navigateMonth = (direction) => {
+  let m = parseInt(selectedMonth, 10) || (new Date().getMonth() + 1);
+  let y = parseInt(selectedYear, 10) || new Date().getFullYear();
+  m += direction;
+  if (m < 1) {
+    m = 12;
+    y -= 1;
+  } else if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+  selectedMonth = String(m).padStart(2, '0');
+  selectedYear = String(y);
+  initSelectors();
+  localStorage.setItem('et_selected_month', selectedMonth);
+  localStorage.setItem('et_selected_year', selectedYear);
+  renderAll();
 };
 
 // CRUD Operations
@@ -581,14 +812,16 @@ const renderDashboard = (acc, filteredTxs, budgetLimit) => {
 
 const populateCategoryFilterOptions = (acc) => {
   const dom = getDomForAccount(acc);
-  const activeType = dom.filterType.value;
-  const currentSelectedCat = dom.filterCategory.value;
+  if (!dom || !dom.filterType || !dom.filterCategory) return;
+
+  const activeType = dom.filterType.value || 'all';
+  const currentSelectedCat = dom.filterCategory.value || 'all';
 
   dom.filterCategory.innerHTML = '<option value="all">Semua Kategori</option>';
 
-  const list = activeType === 'all'
+  const list = (activeType === 'all' || !CATEGORIES[activeType])
     ? [...CATEGORIES.income, ...CATEGORIES.expense]
-    : CATEGORIES[activeType];
+    : (CATEGORIES[activeType] || []);
 
   const uniqueCats = [];
   const map = new Map();
@@ -606,7 +839,7 @@ const populateCategoryFilterOptions = (acc) => {
     dom.filterCategory.appendChild(opt);
   });
 
-  if (Array.from(dom.filterCategory.options).some(o => o.value === currentSelectedCat)) {
+  if (Array.from(dom.filterCategory.options || []).some(o => o.value === currentSelectedCat)) {
     dom.filterCategory.value = currentSelectedCat;
   } else {
     dom.filterCategory.value = 'all';
@@ -684,6 +917,20 @@ const renderTransactions = (acc, filteredTxs) => {
           ${t.type === 'income' ? '+' : '-'} ${formatIDR(t.amount)}
         </span>
         <div class="tx-actions">
+          <button class="btn btn-outline btn-icon btn-counting-tx" data-id="${t.id}" title="Counting Pembelian Berkala" style="width: 28px; height: 28px; border-radius: 6px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="2" width="16" height="20" rx="2"></rect>
+              <line x1="8" y1="6" x2="16" y2="6"></line>
+              <line x1="16" y1="14" x2="16" y2="18"></line>
+              <path d="M16 10h.01"></path>
+              <path d="M12 10h.01"></path>
+              <path d="M8 10h.01"></path>
+              <path d="M12 14h.01"></path>
+              <path d="M8 14h.01"></path>
+              <path d="M12 18h.01"></path>
+              <path d="M8 18h.01"></path>
+            </svg>
+          </button>
           <button class="btn btn-outline btn-icon btn-edit-tx" data-id="${t.id}" title="Edit Transaksi" style="width: 28px; height: 28px; border-radius: 6px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -700,6 +947,7 @@ const renderTransactions = (acc, filteredTxs) => {
       </div>
     `;
 
+    row.querySelector('.btn-counting-tx').addEventListener('click', () => openTxCountingModal(t));
     row.querySelector('.btn-edit-tx').addEventListener('click', () => openFormModal(t));
     row.querySelector('.btn-delete-tx').addEventListener('click', () => deleteTransaction(t.id));
 
@@ -880,293 +1128,356 @@ const renderAll = () => {
 
 // Form Management (Modal Dialog)
 const openFormModal = (editData = null) => {
-  const populateModalCategories = (type) => {
-    inputCategory.innerHTML = '';
-    CATEGORIES[type].forEach(cat => {
-      const opt = document.createElement('option');
-      opt.value = cat.id;
-      opt.innerText = `${cat.icon} ${cat.label}`;
-      opt.style.background = '#111827';
-      opt.style.color = 'white';
-      inputCategory.appendChild(opt);
-    });
-  };
+  const modal = document.getElementById('transaction-modal') || transactionModal;
+  if (!modal) {
+    console.error('transaction-modal element not found in DOM');
+    return;
+  }
+  modal.style.display = 'flex';
 
-  const getLocalDateString = () => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+  try {
+    const inCategory = document.getElementById('input-category') || inputCategory;
+    const populateModalCategories = (type) => {
+      if (!inCategory) return;
+      inCategory.innerHTML = '';
+      const catList = CATEGORIES[type] || [];
+      catList.forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat.id;
+        opt.innerText = `${cat.icon} ${cat.label}`;
+        opt.style.background = '#1a3d58';
+        opt.style.color = '#f2f2ef';
+        inCategory.appendChild(opt);
+      });
+    };
 
-  document.getElementById('err-description').style.display = 'none';
-  document.getElementById('err-amount').style.display = 'none';
-  document.getElementById('err-date').style.display = 'none';
+    const errDesc = document.getElementById('err-description');
+    const errAmt = document.getElementById('err-amount');
+    const errDate = document.getElementById('err-date');
+    if (errDesc) errDesc.style.display = 'none';
+    if (errAmt) errAmt.style.display = 'none';
+    if (errDate) errDate.style.display = 'none';
 
-  if (editData) {
-    editingTxId = editData.id;
-    modalTitle.innerText = 'Edit Transaksi';
-    currentFormType = editData.type;
-    inputAccount.value = editData.account || 'gaji';
-    inputDescription.value = editData.description;
-    inputAmount.value = formatNumberInput(String(editData.amount));
-    
-    // Parse day from date
-    const dateParts = editData.date.split('-');
-    editingTxYear = dateParts[0];
-    editingTxMonth = dateParts[1];
-    inputDate.value = parseInt(dateParts[2], 10);
-    
-    inputNotes.value = editData.notes || '';
-    
-    populateModalCategories(editData.type);
-    inputCategory.value = editData.category;
-  } else {
-    editingTxId = null;
-    editingTxYear = null;
-    editingTxMonth = null;
-    modalTitle.innerText = 'Tambah Transaksi';
-    currentFormType = 'expense';
-    inputAccount.value = 'gaji';
-    inputDescription.value = '';
-    inputAmount.value = '';
-    
-    // Default to last entered day if exists, otherwise today's date or 1
-    const lastEnteredDay = localStorage.getItem('et_last_entered_day');
-    if (lastEnteredDay) {
-      inputDate.value = parseInt(lastEnteredDay, 10);
+    const mTitle = document.getElementById('modal-title') || modalTitle;
+    const inAccount = document.getElementById('input-account') || inputAccount;
+    const inDesc = document.getElementById('input-description') || inputDescription;
+    const inAmt = document.getElementById('input-amount') || inputAmount;
+    const inDate = document.getElementById('input-date') || inputDate;
+    const inNotes = document.getElementById('input-notes') || inputNotes;
+
+    if (editData) {
+      editingTxId = editData.id;
+      if (mTitle) mTitle.innerText = 'Edit Transaksi';
+      currentFormType = editData.type || 'expense';
+      if (inAccount) inAccount.value = editData.account || 'gaji';
+      if (inDesc) inDesc.value = editData.description || '';
+      if (inAmt) inAmt.value = formatNumberInput(String(editData.amount || ''));
+      
+      // Parse day from date
+      if (editData.date) {
+        const dateParts = editData.date.split('-');
+        editingTxYear = dateParts[0];
+        editingTxMonth = dateParts[1];
+        if (inDate) inDate.value = parseInt(dateParts[2], 10) || 1;
+      }
+      
+      if (inNotes) inNotes.value = editData.notes || '';
+      
+      populateModalCategories(editData.type || 'expense');
+      if (inCategory && editData.category) inCategory.value = editData.category;
     } else {
-      const today = new Date();
-      const todayYear = String(today.getFullYear());
-      const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
-      if (selectedYear === todayYear && selectedMonth === todayMonth) {
-        inputDate.value = today.getDate();
-      } else {
-        inputDate.value = 1;
+      editingTxId = null;
+      editingTxYear = null;
+      editingTxMonth = null;
+      if (mTitle) mTitle.innerText = 'Tambah Transaksi';
+      currentFormType = 'expense';
+      if (inAccount) inAccount.value = 'gaji';
+      if (inDesc) inDesc.value = '';
+      if (inAmt) inAmt.value = '';
+      
+      // Default to last entered day if exists, otherwise today's date or 1
+      const lastEnteredDay = localStorage.getItem('et_last_entered_day');
+      if (lastEnteredDay && inDate) {
+        inDate.value = parseInt(lastEnteredDay, 10);
+      } else if (inDate) {
+        const today = new Date();
+        const todayYear = String(today.getFullYear());
+        const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+        if (selectedYear === todayYear && selectedMonth === todayMonth) {
+          inDate.value = today.getDate();
+        } else {
+          inDate.value = 1;
+        }
+      }
+      
+      if (inNotes) inNotes.value = '';
+      
+      populateModalCategories('expense');
+      if (inCategory && CATEGORIES.expense.length > 0) {
+        inCategory.value = CATEGORIES.expense[0].id;
       }
     }
-    
-    inputNotes.value = '';
-    
-    populateModalCategories('expense');
-    inputCategory.value = CATEGORIES.expense[0].id;
-  }
 
-  updateFormTypeButtons();
-  transactionModal.style.display = 'flex';
+    updateFormTypeButtons();
+  } catch (err) {
+    console.error('Error inside openFormModal:', err);
+  }
 };
 
 const closeFormModal = () => {
-  transactionModal.style.display = 'none';
+  const modal = document.getElementById('transaction-modal') || transactionModal;
+  if (modal) modal.style.display = 'none';
 };
+
+window.openFormModal = openFormModal;
+window.closeFormModal = closeFormModal;
+
+const switchFormType = (type) => {
+  currentFormType = type;
+  updateFormTypeButtons();
+  const inCat = document.getElementById('input-category') || inputCategory;
+  if (inCat) {
+    inCat.innerHTML = '';
+    const catList = CATEGORIES[type] || [];
+    catList.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.innerText = `${cat.icon} ${cat.label}`;
+      opt.style.background = '#1a3d58';
+      opt.style.color = '#f2f2ef';
+      inCat.appendChild(opt);
+    });
+    if (catList.length > 0) {
+      inCat.value = catList[0].id;
+    }
+  }
+};
+window.switchFormType = switchFormType;
 
 const updateFormTypeButtons = () => {
   const submitBtn = document.getElementById('btn-submit-modal');
+  const typeIncomeBtn = document.getElementById('btn-type-income') || btnTypeIncome;
+  const typeExpenseBtn = document.getElementById('btn-type-expense') || btnTypeExpense;
+
   if (currentFormType === 'income') {
-    btnTypeIncome.classList.add('active');
-    btnTypeExpense.classList.remove('active');
-    submitBtn.style.backgroundColor = 'var(--income)';
-    submitBtn.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+    if (typeIncomeBtn) typeIncomeBtn.classList.add('active');
+    if (typeExpenseBtn) typeExpenseBtn.classList.remove('active');
+    if (submitBtn) {
+      submitBtn.style.backgroundColor = 'var(--income)';
+      submitBtn.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+    }
   } else {
-    btnTypeIncome.classList.remove('active');
-    btnTypeExpense.classList.add('active');
-    submitBtn.style.backgroundColor = 'var(--expense)';
-    submitBtn.style.boxShadow = '0 4px 12px rgba(244, 63, 94, 0.25)';
+    if (typeIncomeBtn) typeIncomeBtn.classList.remove('active');
+    if (typeExpenseBtn) typeExpenseBtn.classList.add('active');
+    if (submitBtn) {
+      submitBtn.style.backgroundColor = 'var(--expense)';
+      submitBtn.style.boxShadow = '0 4px 12px rgba(244, 63, 94, 0.25)';
+    }
   }
 };
 
 // Event Listeners Binding
 const bindEvents = () => {
+  refreshDomElements();
+
   // Month selector navigations
-  btnPrevMonth.addEventListener('click', () => {
-    let m = parseInt(selectedMonth, 10);
-    let y = parseInt(selectedYear, 10);
-    m -= 1;
-    if (m < 1) {
-      m = 12;
-      y -= 1;
-    }
-    selectedMonth = String(m).padStart(2, '0');
-    selectedYear = String(y);
-    initSelectors();
-    localStorage.setItem('et_selected_month', selectedMonth);
-    localStorage.setItem('et_selected_year', selectedYear);
-    renderAll();
-  });
+  const prevBtn = document.getElementById('btn-prev-month') || btnPrevMonth;
+  const nextBtn = document.getElementById('btn-next-month') || btnNextMonth;
+  const selMonth = document.getElementById('select-month') || selectMonth;
+  const selYear = document.getElementById('select-year') || selectYear;
 
-  btnNextMonth.addEventListener('click', () => {
-    let m = parseInt(selectedMonth, 10);
-    let y = parseInt(selectedYear, 10);
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-    selectedMonth = String(m).padStart(2, '0');
-    selectedYear = String(y);
-    initSelectors();
-    localStorage.setItem('et_selected_month', selectedMonth);
-    localStorage.setItem('et_selected_year', selectedYear);
-    renderAll();
-  });
+  if (prevBtn) {
+    prevBtn.addEventListener('click', () => window.navigateMonth(-1));
+  }
 
-  selectMonth.addEventListener('change', (e) => {
-    selectedMonth = e.target.value;
-    localStorage.setItem('et_selected_month', selectedMonth);
-    renderAll();
-  });
+  if (nextBtn) {
+    nextBtn.addEventListener('click', () => window.navigateMonth(1));
+  }
 
-  selectYear.addEventListener('change', (e) => {
-    selectedYear = e.target.value;
-    localStorage.setItem('et_selected_year', selectedYear);
-    renderAll();
-  });
+  if (selMonth) {
+    selMonth.addEventListener('change', (e) => {
+      selectedMonth = e.target.value;
+      localStorage.setItem('et_selected_month', selectedMonth);
+      renderAll();
+    });
+  }
+
+  if (selYear) {
+    selYear.addEventListener('change', (e) => {
+      selectedYear = e.target.value;
+      localStorage.setItem('et_selected_year', selectedYear);
+      renderAll();
+    });
+  }
 
   // Gaji Budget Edit/Save/Cancel
   ['gaji'].forEach(acc => {
     const dom = getDomForAccount(acc);
+    if (!dom) return;
     
-    dom.btnEditBudget.addEventListener('click', () => {
-      const currentKey = `${acc}_${selectedYear}-${selectedMonth}`;
-      dom.inputBudgetLimit.value = formatNumberInput(String(budgets[currentKey] || ''));
-      dom.budgetDisplayView.style.display = 'none';
-      dom.budgetEditForm.style.display = 'flex';
-      dom.inputBudgetLimit.focus();
-    });
+    if (dom.btnEditBudget) {
+      dom.btnEditBudget.addEventListener('click', () => {
+        const currentKey = `${acc}_${selectedYear}-${selectedMonth}`;
+        if (dom.inputBudgetLimit) dom.inputBudgetLimit.value = formatNumberInput(String(budgets[currentKey] || ''));
+        if (dom.budgetDisplayView) dom.budgetDisplayView.style.display = 'none';
+        if (dom.budgetEditForm) dom.budgetEditForm.style.display = 'flex';
+        if (dom.inputBudgetLimit) dom.inputBudgetLimit.focus();
+      });
+    }
 
-    dom.btnCancelBudget.addEventListener('click', () => {
-      dom.budgetDisplayView.style.display = 'block';
-      dom.budgetEditForm.style.display = 'none';
-    });
+    if (dom.btnCancelBudget) {
+      dom.btnCancelBudget.addEventListener('click', () => {
+        if (dom.budgetDisplayView) dom.budgetDisplayView.style.display = 'block';
+        if (dom.budgetEditForm) dom.budgetEditForm.style.display = 'none';
+      });
+    }
 
-    dom.inputBudgetLimit.addEventListener('input', (e) => {
-      e.target.value = formatNumberInput(e.target.value);
-    });
+    if (dom.inputBudgetLimit) {
+      dom.inputBudgetLimit.addEventListener('input', (e) => {
+        e.target.value = formatNumberInput(e.target.value);
+      });
+    }
 
-    dom.budgetEditForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const currentKey = `${acc}_${selectedYear}-${selectedMonth}`;
-      const newLimit = getRawNumber(dom.inputBudgetLimit.value);
-      budgets[currentKey] = newLimit;
-      saveToLocalStorage();
-      dom.budgetDisplayView.style.display = 'block';
-      dom.budgetEditForm.style.display = 'none';
-      renderAll();
-    });
+    if (dom.budgetEditForm) {
+      dom.budgetEditForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const currentKey = `${acc}_${selectedYear}-${selectedMonth}`;
+        const newLimit = getRawNumber(dom.inputBudgetLimit ? dom.inputBudgetLimit.value : '0');
+        budgets[currentKey] = newLimit;
+        saveToLocalStorage();
+        if (dom.budgetDisplayView) dom.budgetDisplayView.style.display = 'block';
+        if (dom.budgetEditForm) dom.budgetEditForm.style.display = 'none';
+        renderAll();
+      });
+    }
 
     // Filter Change listeners for each account
-    dom.inputSearch.addEventListener('input', () => renderAll());
-    dom.filterType.addEventListener('change', () => {
-      populateCategoryFilterOptions(acc);
-      renderAll();
-    });
-    dom.filterCategory.addEventListener('change', () => renderAll());
-    dom.filterSort.addEventListener('change', () => renderAll());
+    if (dom.inputSearch) dom.inputSearch.addEventListener('input', () => renderAll());
+    if (dom.filterType) {
+      dom.filterType.addEventListener('change', () => {
+        populateCategoryFilterOptions(acc);
+        renderAll();
+      });
+    }
+    if (dom.filterCategory) dom.filterCategory.addEventListener('change', () => renderAll());
+    if (dom.filterSort) dom.filterSort.addEventListener('change', () => renderAll());
   });
 
   // Modal triggers
-  btnAddTransaction.addEventListener('click', () => openFormModal());
-  btnCloseModal.addEventListener('click', closeFormModal);
-  btnCancelModal.addEventListener('click', closeFormModal);
-  transactionModal.addEventListener('click', (e) => {
-    if (e.target === transactionModal) closeFormModal();
-  });
+  const addTxBtn = document.getElementById('btn-add-transaction') || btnAddTransaction;
+  const closeMBtn = document.getElementById('btn-close-modal') || btnCloseModal;
+  const cancelMBtn = document.getElementById('btn-cancel-modal') || btnCancelModal;
+  const txModal = document.getElementById('transaction-modal') || transactionModal;
 
-  btnTypeIncome.addEventListener('click', () => {
-    if (currentFormType !== 'income') {
-      currentFormType = 'income';
-      updateFormTypeButtons();
-      inputCategory.innerHTML = '';
-      CATEGORIES.income.forEach(cat => {
-        const opt = document.createElement('option');
-        opt.value = cat.id;
-        opt.innerText = `${cat.icon} ${cat.label}`;
-        inputCategory.appendChild(opt);
-      });
-      inputCategory.value = CATEGORIES.income[0].id;
-    }
-  });
+  if (addTxBtn) {
+    addTxBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      openFormModal();
+    });
+  }
+  if (closeMBtn) closeMBtn.addEventListener('click', closeFormModal);
+  if (cancelMBtn) cancelMBtn.addEventListener('click', closeFormModal);
+  if (txModal) {
+    txModal.addEventListener('click', (e) => {
+      if (e.target === txModal) closeFormModal();
+    });
+  }
 
-  btnTypeExpense.addEventListener('click', () => {
-    if (currentFormType !== 'expense') {
-      currentFormType = 'expense';
-      updateFormTypeButtons();
-      inputCategory.innerHTML = '';
-      CATEGORIES.expense.forEach(cat => {
-        const opt = document.createElement('option');
-        opt.value = cat.id;
-        opt.innerText = `${cat.icon} ${cat.label}`;
-        inputCategory.appendChild(opt);
-      });
-      inputCategory.value = CATEGORIES.expense[0].id;
-    }
-  });
+  const typeInc = document.getElementById('btn-type-income') || btnTypeIncome;
+  if (typeInc) {
+    typeInc.addEventListener('click', () => switchFormType('income'));
+  }
 
-  inputAmount.addEventListener('input', (e) => {
-    e.target.value = formatNumberInput(e.target.value);
-  });
+  const typeExp = document.getElementById('btn-type-expense') || btnTypeExpense;
+  if (typeExp) {
+    typeExp.addEventListener('click', () => switchFormType('expense'));
+  }
 
-  transactionForm.addEventListener('submit', (e) => {
-    e.preventDefault();
+  const inAmt = document.getElementById('input-amount') || inputAmount;
+  if (inAmt) {
+    inAmt.addEventListener('input', (e) => {
+      e.target.value = formatNumberInput(e.target.value);
+    });
+  }
 
-    const acc = inputAccount.value;
-    const desc = inputDescription.value.trim();
-    const amt = getRawNumber(inputAmount.value);
-    const dt = parseInt(inputDate.value, 10);
-    const cat = inputCategory.value;
-    const nts = inputNotes.value.trim();
+  const txForm = document.getElementById('transaction-form') || transactionForm;
+  if (txForm) {
+    txForm.addEventListener('submit', (e) => {
+      e.preventDefault();
 
-    let hasError = false;
+      const inAcc = document.getElementById('input-account') || inputAccount;
+      const inDesc = document.getElementById('input-description') || inputDescription;
+      const inAmtVal = document.getElementById('input-amount') || inputAmount;
+      const inDateVal = document.getElementById('input-date') || inputDate;
+      const inCatVal = document.getElementById('input-category') || inputCategory;
+      const inNotesVal = document.getElementById('input-notes') || inputNotes;
 
-    if (!desc) {
-      document.getElementById('err-description').innerText = 'Deskripsi tidak boleh kosong.';
-      document.getElementById('err-description').style.display = 'block';
-      hasError = true;
-    }
-    if (!amt || amt <= 0) {
-      document.getElementById('err-amount').innerText = 'Jumlah uang harus lebih besar dari Rp 0.';
-      document.getElementById('err-amount').style.display = 'block';
-      hasError = true;
-    }
-    if (isNaN(dt) || dt < 1 || dt > 31) {
-      document.getElementById('err-date').innerText = 'Tanggal harus diisi antara 1 sampai 31.';
-      document.getElementById('err-date').style.display = 'block';
-      hasError = true;
-    }
+      const acc = inAcc ? inAcc.value : 'gaji';
+      const desc = inDesc ? inDesc.value.trim() : '';
+      const amt = getRawNumber(inAmtVal ? inAmtVal.value : '0');
+      const dt = inDateVal ? parseInt(inDateVal.value, 10) : 1;
+      const cat = inCatVal ? inCatVal.value : '';
+      const nts = inNotesVal ? inNotesVal.value.trim() : '';
 
-    if (hasError) return;
+      let hasError = false;
 
-    // Persist last entered day for subsequent transactions
-    localStorage.setItem('et_last_entered_day', String(dt));
+      const errDesc = document.getElementById('err-description');
+      const errAmt = document.getElementById('err-amount');
+      const errDt = document.getElementById('err-date');
 
-    // Construct full date string based on active session or editing data
-    const targetYear = editingTxId ? editingTxYear : selectedYear;
-    const targetMonth = editingTxId ? editingTxMonth : selectedMonth;
-    const dateStr = `${targetYear}-${targetMonth}-${String(dt).padStart(2, '0')}`;
+      if (!desc) {
+        if (errDesc) {
+          errDesc.innerText = 'Deskripsi tidak boleh kosong.';
+          errDesc.style.display = 'block';
+        }
+        hasError = true;
+      }
+      if (!amt || amt <= 0) {
+        if (errAmt) {
+          errAmt.innerText = 'Jumlah uang harus lebih besar dari Rp 0.';
+          errAmt.style.display = 'block';
+        }
+        hasError = true;
+      }
+      if (isNaN(dt) || dt < 1 || dt > 31) {
+        if (errDt) {
+          errDt.innerText = 'Tanggal harus diisi antara 1 sampai 31.';
+          errDt.style.display = 'block';
+        }
+        hasError = true;
+      }
 
-    const payload = {
-      description: desc,
-      amount: amt,
-      type: currentFormType,
-      category: cat,
-      date: dateStr,
-      notes: nts,
-      account: acc
-    };
+      if (hasError) return;
 
-    if (editingTxId) {
-      editTransaction(editingTxId, payload);
-    } else {
-      addTransaction(payload);
-    }
+      localStorage.setItem('et_last_entered_day', String(dt));
 
-    closeFormModal();
-  });
+      const targetYear = editingTxId ? editingTxYear : selectedYear;
+      const targetMonth = editingTxId ? editingTxMonth : selectedMonth;
+      const dateStr = `${targetYear}-${targetMonth}-${String(dt).padStart(2, '0')}`;
+
+      const payload = {
+        description: desc,
+        amount: amt,
+        type: currentFormType,
+        category: cat,
+        date: dateStr,
+        notes: nts,
+        account: acc
+      };
+
+      if (editingTxId) {
+        editTransaction(editingTxId, payload);
+      } else {
+        addTransaction(payload);
+      }
+
+      closeFormModal();
+    });
+  }
 
   // Backup, Restore & Reset
-  // Backup, Restore & Reset
-  btnExport.addEventListener('click', () => {
+  if (btnExport) {
+    btnExport.addEventListener('click', () => {
     // Generate Excel report directly from browser state
     const year = selectedYear;
     const month = selectedMonth;
@@ -1214,7 +1525,7 @@ const bindEvents = () => {
     };
 
     const summaryRows = [
-      ['REKAPITULASI KEUANGAN BULANAN - FINANSIKU'],
+      ['REKAPITULASI KEUANGAN BULANAN - EXPENSE TRACKER'],
       [`Periode: ${monthLabel}`],
       [`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')}`],
       [],
@@ -1315,91 +1626,1064 @@ const bindEvents = () => {
     // Trigger Excel file download
     const filename = `Rekaptulasi Keuangan - ${monthLabel}.xlsx`;
     XLSX.writeFile(wb, filename);
-  });
+    });
+  }
 
-  btnImport.addEventListener('click', () => {
-    importFileInput.click();
-  });
+  if (btnImport && importFileInput) {
+    btnImport.addEventListener('click', () => {
+      importFileInput.click();
+    });
+  }
 
-  importFileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  if (importFileInput) {
+    importFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target.result);
-        if (parsed.transactions && Array.isArray(parsed.transactions)) {
-          transactions = parsed.transactions;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          if (parsed.transactions && Array.isArray(parsed.transactions)) {
+            transactions = parsed.transactions;
+          }
+          if (parsed.budgets && typeof parsed.budgets === 'object') {
+            budgets = parsed.budgets;
+          }
+          localStorage.setItem('et_initialized', 'true');
+          saveToLocalStorage();
+          renderAll();
+          alert('Data berhasil diimpor!');
+        } catch (err) {
+          alert('Gagal mengimpor data: File JSON tidak valid.');
         }
-        if (parsed.budgets && typeof parsed.budgets === 'object') {
-          budgets = parsed.budgets;
-        }
-        localStorage.setItem('et_initialized', 'true');
-        saveToLocalStorage();
-        renderAll();
-        alert('Data berhasil diimpor!');
-      } catch (err) {
-        alert('Gagal mengimpor data: File JSON tidak valid.');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  });
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+  }
 
   const btnReset = document.getElementById('btn-reset');
-  btnReset.addEventListener('click', () => {
-    if (confirm('Apakah Anda yakin ingin menghapus semua data transaksi dan anggaran? Tindakan ini tidak dapat dibatalkan.')) {
-      localStorage.removeItem('et_transactions');
-      localStorage.removeItem('et_budgets');
-      transactions = [];
-      budgets = {};
-      renderAll();
+  if (btnReset) {
+    btnReset.addEventListener('click', () => {
+      if (confirm('Apakah Anda yakin ingin menghapus semua data transaksi dan anggaran? Tindakan ini tidak dapat dibatalkan.')) {
+        localStorage.removeItem('et_transactions');
+        localStorage.removeItem('et_budgets');
+        transactions = [];
+        budgets = {};
+        renderAll();
+      }
+    });
+  }
+};
+
+// ==========================================
+// CART & PERIODIC PURCHASE COUNTING MODULE
+// ==========================================
+const DEFAULT_CART_ITEMS = [
+  // 🍔 Makanan & Minuman
+  { id: 'cart-makanan-1', name: 'Galon Air Mineral', category: 'makanan', price: 20000, qty: 0, unit: 'galon', isCustom: false },
+  { id: 'cart-makanan-2', name: 'Beras Premium 5kg', category: 'makanan', price: 75000, qty: 0, unit: 'sak', isCustom: false },
+  { id: 'cart-makanan-3', name: 'Minyak Goreng 2L', category: 'makanan', price: 36000, qty: 0, unit: 'pouch', isCustom: false },
+  { id: 'cart-makanan-4', name: 'Telur Ayam 1kg', category: 'makanan', price: 28000, qty: 0, unit: 'kg', isCustom: false },
+  { id: 'cart-makanan-5', name: 'Kopi / Minuman Rutin', category: 'makanan', price: 18000, qty: 0, unit: 'cup', isCustom: false },
+  { id: 'cart-makanan-6', name: 'Makan Harian / Lauk', category: 'makanan', price: 25000, qty: 0, unit: 'porsi', isCustom: false },
+
+  // 🛍️ Belanja
+  { id: 'cart-belanja-1', name: 'Sabun Mandi & Sampo', category: 'belanja', price: 35000, qty: 0, unit: 'botol', isCustom: false },
+  { id: 'cart-belanja-2', name: 'Deterjen & Pewangi Pakaian', category: 'belanja', price: 25000, qty: 0, unit: 'pack', isCustom: false },
+  { id: 'cart-belanja-3', name: 'Tisu Wajah & Dapur', category: 'belanja', price: 15000, qty: 0, unit: 'pack', isCustom: false },
+  { id: 'cart-belanja-4', name: 'Pasta Gigi & Sikat Gigi', category: 'belanja', price: 18000, qty: 0, unit: 'pcs', isCustom: false },
+  { id: 'cart-belanja-5', name: 'Sabun Cuci Piring', category: 'belanja', price: 15000, qty: 0, unit: 'pouch', isCustom: false },
+
+  // 🏠 Tempat Tinggal
+  { id: 'cart-tempat-1', name: 'Isi Ulang Gas Elpiji 3kg', category: 'tempat-tinggal', price: 22000, qty: 0, unit: 'tabung', isCustom: false },
+  { id: 'cart-tempat-2', name: 'Perlengkapan Kebersihan Rumah', category: 'tempat-tinggal', price: 30000, qty: 0, unit: 'set', isCustom: false },
+
+  // 🚗 Transportasi
+  { id: 'cart-trans-1', name: 'Bensin Motor (Pertalite/Pertamax)', category: 'transportasi', price: 35000, qty: 0, unit: 'isi', isCustom: false },
+  { id: 'cart-trans-2', name: 'Bensin Mobil', category: 'transportasi', price: 150000, qty: 0, unit: 'isi', isCustom: false },
+  { id: 'cart-trans-3', name: 'Tarif Tol / Parkir Harian', category: 'transportasi', price: 20000, qty: 0, unit: 'hari', isCustom: false },
+
+  // 🔌 Tagihan & Utilitas
+  { id: 'cart-tagihan-1', name: 'Token Listrik PLN', category: 'tagihan', price: 100000, qty: 0, unit: 'token', isCustom: false },
+  { id: 'cart-tagihan-2', name: 'Paket Internet / Pulsa', category: 'tagihan', price: 75000, qty: 0, unit: 'bulan', isCustom: false },
+  { id: 'cart-tagihan-3', name: 'Iuran Air / Kebersihan Lingkungan', category: 'tagihan', price: 50000, qty: 0, unit: 'bulan', isCustom: false },
+
+  // 🏥 Kesehatan
+  { id: 'cart-kes-1', name: 'Vitamin & Suplemen', category: 'kesehatan', price: 45000, qty: 0, unit: 'strip', isCustom: false },
+  { id: 'cart-kes-2', name: 'Obat-obatan Rutin', category: 'kesehatan', price: 25000, qty: 0, unit: 'kotak', isCustom: false },
+
+  // 🎬 Hiburan
+  { id: 'cart-hib-1', name: 'Cemilan & Snack Nonton', category: 'hiburan', price: 25000, qty: 0, unit: 'pack', isCustom: false },
+];
+
+let cartItems = [];
+const savedCart = localStorage.getItem('et_cart_items');
+if (savedCart) {
+  try {
+    cartItems = JSON.parse(savedCart);
+  } catch (e) {
+    cartItems = [...DEFAULT_CART_ITEMS];
+  }
+} else {
+  cartItems = [...DEFAULT_CART_ITEMS];
+  localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
+}
+
+let cartShippingFee = Number(localStorage.getItem('et_cart_shipping') || '0');
+let activeCartCategory = 'all';
+let cartFilterOnlyActive = false;
+let cartSearchKeyword = '';
+let editingCartPriceItemId = null;
+
+const saveCartToLocalStorage = () => {
+  localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
+  localStorage.setItem('et_cart_shipping', String(cartShippingFee));
+  updateCartBadge();
+};
+
+const getCartTotals = () => {
+  let totalQty = 0;
+  let subtotal = 0;
+  const categoryCounts = {};
+
+  cartItems.forEach(item => {
+    const q = Math.max(0, Number(item.qty) || 0);
+    const p = Math.max(0, Number(item.price) || 0);
+    totalQty += q;
+    subtotal += q * p;
+
+    if (q > 0) {
+      categoryCounts[item.category] = (categoryCounts[item.category] || 0) + q;
     }
+  });
+
+  const grandTotal = subtotal + (totalQty > 0 ? cartShippingFee : 0);
+  return { totalQty, subtotal, shipping: cartShippingFee, grandTotal, categoryCounts };
+};
+
+const updateCartBadge = () => {
+  const { totalQty } = getCartTotals();
+  const headerBadge = document.getElementById('cart-header-badge');
+  const modalBadge = document.getElementById('cart-modal-item-badge');
+  const activeCountEl = document.getElementById('cart-active-count');
+
+  if (headerBadge) {
+    headerBadge.innerText = totalQty;
+    headerBadge.style.display = totalQty > 0 ? 'flex' : 'none';
+  }
+  if (modalBadge) {
+    modalBadge.innerText = totalQty;
+  }
+  if (activeCountEl) {
+    const activeDistinctItems = cartItems.filter(i => (Number(i.qty) || 0) > 0).length;
+    activeCountEl.innerText = activeDistinctItems;
+  }
+};
+
+const openCartModal = () => {
+  editingCartPriceItemId = null;
+  const cartModal = document.getElementById('cart-modal');
+  if (cartModal) {
+    cartModal.style.display = 'flex';
+    renderCartUI();
+  }
+};
+
+const closeCartModal = () => {
+  const cartModal = document.getElementById('cart-modal');
+  if (cartModal) {
+    cartModal.style.display = 'none';
+  }
+  editingCartPriceItemId = null;
+};
+
+const renderCartCategoryPills = () => {
+  const container = document.getElementById('cart-category-pills');
+  if (!container) return;
+
+  const { totalQty, categoryCounts } = getCartTotals();
+  container.innerHTML = '';
+
+  const createPill = (catId, icon, label, count) => {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = `cart-cat-pill ${activeCartCategory === catId ? 'active' : ''}`;
+    pill.innerHTML = `
+      <span>${icon}</span>
+      <span>${label}</span>
+      <span class="cart-pill-badge">${count}</span>
+    `;
+    pill.addEventListener('click', () => {
+      activeCartCategory = catId;
+      renderCartUI();
+    });
+    return pill;
+  };
+
+  // 'Semua Kategori' pill
+  container.appendChild(createPill('all', '📋', 'Semua Kategori', totalQty));
+
+  // Expense categories
+  CATEGORIES.expense.forEach(cat => {
+    const count = categoryCounts[cat.id] || 0;
+    container.appendChild(createPill(cat.id, cat.icon, cat.label, count));
   });
 };
 
-const migrateToDefaultSyncCode = async () => {
-  if (localStorage.getItem('et_sync_migrated_v2') === 'true') {
+const renderCartItems = () => {
+  const container = document.getElementById('cart-items-container');
+  const emptyState = document.getElementById('cart-empty-state');
+  if (!container) return;
+
+  // Filter items based on active category and active filter toggle
+  const filtered = cartItems.filter(item => {
+    const matchCategory = (activeCartCategory === 'all' || item.category === activeCartCategory);
+    const matchActive = (!cartFilterOnlyActive || (Number(item.qty) || 0) > 0);
+    return matchCategory && matchActive;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
     return;
   }
-  
-  console.log('Running one-time sync migration to FN-UTAMA...');
-  const docRef = doc(db, 'sync', DEFAULT_SYNC_CODE);
-  try {
-    const docSnap = await getDoc(docRef);
-    let cloudTransactions = [];
-    let cloudBudgets = {};
-    
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      cloudTransactions = data.transactions || [];
-      cloudBudgets = data.budgets || {};
+
+  if (emptyState) emptyState.style.display = 'none';
+  container.innerHTML = '';
+
+  filtered.forEach(item => {
+    const cat = CATEGORIES.expense.find(c => c.id === item.category) || { label: 'Lain-lain', icon: '🛍️', color: '#818cf8' };
+    const qty = Math.max(0, Number(item.qty) || 0);
+    const price = Math.max(0, Number(item.price) || 0);
+    const lineTotal = qty * price;
+    const isEditingPrice = (editingCartPriceItemId === item.id);
+
+    const card = document.createElement('div');
+    card.className = `cart-item-card ${qty > 0 ? 'has-qty' : ''}`;
+
+    let priceHtml = '';
+    if (isEditingPrice) {
+      priceHtml = `
+        <form class="cart-item-price-edit-form" data-id="${item.id}">
+          <input type="text" inputmode="numeric" class="cart-item-price-input" value="${formatNumberInput(String(price))}" />
+          <button type="submit" class="cart-item-price-save-btn" title="Simpan Harga">✓</button>
+          <button type="button" class="btn-cancel-edit-price" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem;" title="Batal">✕</button>
+        </form>
+      `;
+    } else {
+      priceHtml = `
+        <div class="cart-item-price-view" data-id="${item.id}" title="Klik untuk edit harga">
+          <span>${formatIDR(price)}</span>
+          <button type="button" class="btn-inline-price-edit" data-id="${item.id}" title="Ubah harga satuan">✏️</button>
+        </div>
+      `;
     }
-    
-    // Merge local and cloud transactions based on unique ID
-    const mergedTxs = [...transactions];
-    cloudTransactions.forEach(ctx => {
-      if (!mergedTxs.some(lx => lx.id === ctx.id)) {
-        mergedTxs.push(ctx);
+
+    card.innerHTML = `
+      <div class="cart-item-left">
+        <div class="cart-item-thumb" style="background: ${cat.color}15; border-color: ${cat.color}35;">
+          <span>${cat.icon}</span>
+        </div>
+        <div class="cart-item-info">
+          <div class="cart-item-title" title="${item.name}">${item.name}</div>
+          <div class="cart-item-price-row">
+            ${priceHtml}
+          </div>
+        </div>
+      </div>
+      <div class="cart-item-right">
+        <div class="cart-stepper">
+          <button type="button" class="cart-step-btn btn-qty-minus" data-id="${item.id}" title="Kurangi kuantitas">−</button>
+          <input type="number" min="0" max="999" class="cart-qty-input" data-id="${item.id}" value="${qty}" />
+          <button type="button" class="cart-step-btn btn-qty-plus" data-id="${item.id}" title="Tambah kuantitas">+</button>
+        </div>
+        <div class="cart-item-total ${qty > 0 ? '' : 'muted'}">
+          ${formatIDR(lineTotal)}
+        </div>
+        ${item.isCustom ? `
+          <button type="button" class="btn-delete-cart-item" data-id="${item.id}" title="Hapus Barang">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+        ` : ''}
+      </div>
+    `;
+
+    // Bind quantity events
+    const minusBtn = card.querySelector('.btn-qty-minus');
+    const plusBtn = card.querySelector('.btn-qty-plus');
+    const qtyInput = card.querySelector('.cart-qty-input');
+    const deleteBtn = card.querySelector('.btn-delete-cart-item');
+
+    minusBtn.addEventListener('click', () => {
+      if (item.qty > 0) {
+        item.qty -= 1;
+        saveCartToLocalStorage();
+        renderCartUI();
       }
     });
+
+    plusBtn.addEventListener('click', () => {
+      item.qty = (Number(item.qty) || 0) + 1;
+      saveCartToLocalStorage();
+      renderCartUI();
+    });
+
+    qtyInput.addEventListener('change', (e) => {
+      const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+      item.qty = val;
+      saveCartToLocalStorage();
+      renderCartUI();
+    });
+
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => {
+        if (confirm(`Hapus "${item.name}" dari daftar barang?`)) {
+          cartItems = cartItems.filter(i => i.id !== item.id);
+          saveCartToLocalStorage();
+          renderCartUI();
+        }
+      });
+    }
+
+    // Bind price edit events
+    if (isEditingPrice) {
+      const form = card.querySelector('.cart-item-price-edit-form');
+      const input = card.querySelector('.cart-item-price-input');
+      const cancelBtn = card.querySelector('.btn-cancel-edit-price');
+
+      input.addEventListener('input', (e) => {
+        e.target.value = formatNumberInput(e.target.value);
+      });
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const newPrice = getRawNumber(input.value);
+        if (newPrice > 0) {
+          item.price = newPrice;
+          editingCartPriceItemId = null;
+          saveCartToLocalStorage();
+          renderCartUI();
+        } else {
+          alert('Harga satuan harus lebih besar dari Rp 0!');
+        }
+      });
+
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editingCartPriceItemId = null;
+        renderCartItems();
+      });
+
+      setTimeout(() => input.focus(), 30);
+    } else {
+      const priceView = card.querySelector('.cart-item-price-view');
+      priceView.addEventListener('click', () => {
+        editingCartPriceItemId = item.id;
+        renderCartItems();
+      });
+    }
+
+    container.appendChild(card);
+  });
+};
+
+const renderCartSummary = () => {
+  const { totalQty, subtotal, shipping, grandTotal } = getCartTotals();
+
+  const totalQtyEl = document.getElementById('cart-summary-total-qty');
+  const subtotalEl = document.getElementById('cart-summary-subtotal');
+  const shippingEl = document.getElementById('cart-summary-shipping');
+  const grandTotalEl = document.getElementById('cart-summary-total');
+
+  if (totalQtyEl) totalQtyEl.innerText = totalQty;
+  if (subtotalEl) subtotalEl.innerText = formatIDR(subtotal);
+  if (shippingEl) {
+    if (shipping > 0) {
+      shippingEl.innerText = formatIDR(shipping);
+      shippingEl.style.color = 'var(--text-primary)';
+    } else {
+      shippingEl.innerText = 'Gratis (Rp 0)';
+      shippingEl.style.color = 'var(--income)';
+    }
+  }
+  if (grandTotalEl) grandTotalEl.innerText = formatIDR(grandTotal);
+};
+
+const renderCartUI = () => {
+  renderCartCategoryPills();
+  renderCartItems();
+  renderCartSummary();
+  updateCartBadge();
+};
+
+const handleCheckoutCart = () => {
+  const { totalQty, grandTotal, subtotal } = getCartTotals();
+  if (totalQty === 0) {
+    alert('Keranjang belanja masih kosong! Tambahkan kuantitas barang terlebih dahulu sebelum mencatat ke transaksi.');
+    return;
+  }
+
+  const activeItems = cartItems.filter(i => (Number(i.qty) || 0) > 0);
+  const categoriesInvolved = [...new Set(activeItems.map(i => i.category))];
+
+  // Itemized breakdown text for notes
+  const itemLines = activeItems.map(i => {
+    const p = Number(i.price) || 0;
+    const q = Number(i.qty) || 0;
+    return `• ${i.name}: ${q}x @ ${formatIDR(p)} = ${formatIDR(q * p)}`;
+  });
+
+  if (cartShippingFee > 0) {
+    itemLines.push(`• Ongkir / Biaya Tambahan: ${formatIDR(cartShippingFee)}`);
+  }
+  itemLines.push(`Total Belanja: ${formatIDR(grandTotal)}`);
+  const notesText = `Rincian Pembelian Berkala:\n${itemLines.join('\n')}`;
+
+  // Description short summary
+  const summaryNames = activeItems.slice(0, 3).map(i => `${i.name} (${i.qty}x)`).join(', ');
+  const remaining = activeItems.length - 3;
+  const descText = `Pembelian: ${summaryNames}${remaining > 0 ? ` +${remaining} barang lain` : ''}`;
+
+  // Date
+  const today = new Date();
+  const todayYear = String(today.getFullYear());
+  const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+  const todayDay = String(today.getDate()).padStart(2, '0');
+
+  const targetYear = selectedYear || todayYear;
+  const targetMonth = selectedMonth || todayMonth;
+  const targetDay = (selectedYear === todayYear && selectedMonth === todayMonth) ? todayDay : '01';
+  const txDate = `${targetYear}-${targetMonth}-${targetDay}`;
+
+  // Main category
+  let mainCat = 'belanja';
+  if (categoriesInvolved.length === 1) {
+    mainCat = categoriesInvolved[0];
+  } else if (activeCartCategory !== 'all') {
+    mainCat = activeCartCategory;
+  }
+
+  const confirmMsg = `Catat pengeluaran pembelian berkala sebesar ${formatIDR(grandTotal)} (${totalQty} barang) ke riwayat transaksi?`;
+  if (confirm(confirmMsg)) {
+    addTransaction({
+      description: descText,
+      amount: grandTotal,
+      type: 'expense',
+      category: mainCat,
+      date: txDate,
+      notes: notesText,
+      account: 'gaji'
+    });
+
+    if (confirm('Transaksi berhasil dicatat!\n\nApakah Anda ingin mereset kuantitas keranjang menjadi 0 untuk sesi belanja berikutnya?')) {
+      cartItems.forEach(i => { i.qty = 0; });
+      saveCartToLocalStorage();
+    }
+
+    closeCartModal();
+    renderAll();
+  }
+};
+
+const initCart = () => {
+  const btnOpenCart = document.getElementById('btn-open-cart');
+  const btnCloseCartModal = document.getElementById('btn-close-cart-modal');
+  const cartModal = document.getElementById('cart-modal');
+  const cartFilterAll = document.getElementById('cart-filter-all');
+  const cartFilterActive = document.getElementById('cart-filter-active');
+  const btnOpenAddCartItem = document.getElementById('btn-open-add-cart-item');
+  const cartNewItemForm = document.getElementById('cart-new-item-form');
+  const inputNewCartName = document.getElementById('input-new-cart-name');
+  const inputNewCartCategory = document.getElementById('input-new-cart-category');
+  const inputNewCartPrice = document.getElementById('input-new-cart-price');
+  const btnCancelAddCartItem = document.getElementById('btn-cancel-add-cart-item');
+  const btnResetCart = document.getElementById('btn-reset-cart');
+  const btnCheckoutCart = document.getElementById('btn-checkout-cart');
+  
+  // Shipping controls
+  const btnEditShipping = document.getElementById('btn-edit-shipping');
+  const shippingDisplay = document.getElementById('cart-summary-shipping');
+  const shippingEditRow = document.getElementById('cart-shipping-edit-row');
+  const inputCartShipping = document.getElementById('input-cart-shipping');
+  const btnSaveShipping = document.getElementById('btn-save-shipping');
+  const btnCancelShipping = document.getElementById('btn-cancel-shipping');
+
+  // Modal open/close
+  if (btnOpenCart) btnOpenCart.addEventListener('click', openCartModal);
+  if (btnCloseCartModal) btnCloseCartModal.addEventListener('click', closeCartModal);
+  if (cartModal) {
+    cartModal.addEventListener('click', (e) => {
+      if (e.target === cartModal) closeCartModal();
+    });
+  }
+
+  // Filter Segment
+  if (cartFilterAll && cartFilterActive) {
+    cartFilterAll.addEventListener('click', () => {
+      cartFilterOnlyActive = false;
+      cartFilterAll.classList.add('active');
+      cartFilterActive.classList.remove('active');
+      renderCartItems();
+    });
+    cartFilterActive.addEventListener('click', () => {
+      cartFilterOnlyActive = true;
+      cartFilterActive.classList.add('active');
+      cartFilterAll.classList.remove('active');
+      renderCartItems();
+    });
+  }
+
+  // Populate New Item Category Dropdown
+  if (inputNewCartCategory) {
+    inputNewCartCategory.innerHTML = '';
+    CATEGORIES.expense.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.innerText = `${cat.icon} ${cat.label}`;
+      inputNewCartCategory.appendChild(opt);
+    });
+  }
+
+  // Add Item Toggle & Form
+  if (btnOpenAddCartItem && cartNewItemForm) {
+    btnOpenAddCartItem.addEventListener('click', () => {
+      const isHidden = cartNewItemForm.style.display === 'none';
+      cartNewItemForm.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden) {
+        inputNewCartName.value = '';
+        inputNewCartPrice.value = '';
+        if (activeCartCategory !== 'all') {
+          inputNewCartCategory.value = activeCartCategory;
+        }
+        inputNewCartName.focus();
+      }
+    });
+  }
+
+  if (btnCancelAddCartItem && cartNewItemForm) {
+    btnCancelAddCartItem.addEventListener('click', () => {
+      cartNewItemForm.style.display = 'none';
+    });
+  }
+
+  if (inputNewCartPrice) {
+    inputNewCartPrice.addEventListener('input', (e) => {
+      e.target.value = formatNumberInput(e.target.value);
+    });
+  }
+
+  if (cartNewItemForm) {
+    cartNewItemForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = inputNewCartName.value.trim();
+      const cat = inputNewCartCategory.value;
+      const price = getRawNumber(inputNewCartPrice.value);
+
+      if (!name) {
+        alert('Nama barang tidak boleh kosong!');
+        return;
+      }
+      if (price <= 0) {
+        alert('Harga barang harus lebih besar dari Rp 0!');
+        return;
+      }
+
+      const newItem = {
+        id: 'cart-custom-' + Date.now(),
+        name,
+        category: cat,
+        price,
+        qty: 1, // Start with qty 1 when adding new item
+        isCustom: true
+      };
+
+      cartItems.unshift(newItem);
+      saveCartToLocalStorage();
+      cartNewItemForm.style.display = 'none';
+      activeCartCategory = cat; // Switch to the category of the newly added item
+      renderCartUI();
+    });
+  }
+
+  // Shipping fee edit
+  const openShippingEdit = () => {
+    if (shippingEditRow) {
+      shippingEditRow.style.display = 'flex';
+      inputCartShipping.value = formatNumberInput(String(cartShippingFee));
+      inputCartShipping.focus();
+    }
+  };
+
+  if (btnEditShipping) btnEditShipping.addEventListener('click', openShippingEdit);
+  if (shippingDisplay) shippingDisplay.addEventListener('click', openShippingEdit);
+
+  if (inputCartShipping) {
+    inputCartShipping.addEventListener('input', (e) => {
+      e.target.value = formatNumberInput(e.target.value);
+    });
+  }
+
+  if (btnSaveShipping && shippingEditRow) {
+    btnSaveShipping.addEventListener('click', () => {
+      cartShippingFee = getRawNumber(inputCartShipping.value);
+      saveCartToLocalStorage();
+      shippingEditRow.style.display = 'none';
+      renderCartSummary();
+    });
+  }
+
+  if (btnCancelShipping && shippingEditRow) {
+    btnCancelShipping.addEventListener('click', () => {
+      shippingEditRow.style.display = 'none';
+    });
+  }
+
+  // Reset Cart
+  if (btnResetCart) {
+    btnResetCart.addEventListener('click', () => {
+      const { totalQty } = getCartTotals();
+      if (totalQty === 0) {
+        alert('Kuantitas keranjang sudah 0.');
+        return;
+      }
+      if (confirm('Reset semua kuantitas barang belanjaan menjadi 0?')) {
+        cartItems.forEach(i => { i.qty = 0; });
+        saveCartToLocalStorage();
+        renderCartUI();
+      }
+    });
+  }
+
+  // Checkout
+  if (btnCheckoutCart) {
+    btnCheckoutCart.addEventListener('click', handleCheckoutCart);
+  }
+
+  // Helper inside transaction modal
+  const btnModalOpenCartCalc = document.getElementById('btn-modal-open-cart-calc');
+  if (btnModalOpenCartCalc) {
+    btnModalOpenCartCalc.addEventListener('click', () => {
+      const { totalQty, grandTotal } = getCartTotals();
+      if (grandTotal > 0) {
+        const inputAmount = document.getElementById('input-amount');
+        const inputDesc = document.getElementById('input-description');
+        const inputNotes = document.getElementById('input-notes');
+        const inputCat = document.getElementById('input-category');
+
+        if (inputAmount) inputAmount.value = formatNumberInput(String(grandTotal));
+
+        const activeItems = cartItems.filter(i => (Number(i.qty) || 0) > 0);
+        const summaryNames = activeItems.slice(0, 2).map(i => `${i.name} (${i.qty}x)`).join(', ');
+        if (inputDesc && !inputDesc.value) {
+          inputDesc.value = `Pembelian: ${summaryNames}`;
+        }
+
+        const itemLines = activeItems.map(i => `• ${i.name}: ${i.qty}x @ ${formatIDR(i.price)} = ${formatIDR(i.qty * i.price)}`);
+        if (cartShippingFee > 0) itemLines.push(`• Ongkir: ${formatIDR(cartShippingFee)}`);
+        itemLines.push(`Total: ${formatIDR(grandTotal)}`);
+
+        if (inputNotes && !inputNotes.value) {
+          inputNotes.value = `Rincian Keranjang:\n${itemLines.join('\n')}`;
+        }
+
+        const cats = [...new Set(activeItems.map(i => i.category))];
+        if (cats.length === 1 && inputCat) {
+          inputCat.value = cats[0];
+        }
+
+        alert(`Nominal ${formatIDR(grandTotal)} berhasil diisikan dari Keranjang Belanja!`);
+      } else {
+        openCartModal();
+      }
+    });
+  }
+
+  updateCartBadge();
+};
+
+// ==========================================
+// TRANSACTION COUNTING MODULE (ITEMIZED)
+// ==========================================
+let selectedCountingTx = null;
+let currentCountingItems = [];
+
+// Helper to extract or initialize items for a transaction
+const extractItemsFromTx = (t) => {
+  if (t.items && Array.isArray(t.items) && t.items.length > 0) {
+    return JSON.parse(JSON.stringify(t.items));
+  }
+
+  // Parse from notes if notes has lines like:
+  // "• rokok (1x @ Rp 35.000 = Rp 35.000)" or "• rokok: 1x @ Rp 35.000"
+  if (t.notes) {
+    const lines = t.notes.split('\n');
+    const parsed = [];
+    const itemRegex = /[•\-\*]\s*([^:(]+?)(?:\s*\(|\s*:)\s*(\d+)x\s*@\s*Rp\s*([\d\.]+)/i;
     
-    // Merge budgets
-    const mergedBudgets = { ...budgets, ...cloudBudgets };
-    
-    transactions = mergedTxs;
-    budgets = mergedBudgets;
-    
-    // Mark as migrated
-    localStorage.setItem('et_sync_migrated_v2', 'true');
-    
-    // Save the merged data locally and push to cloud
-    saveToLocalStorage(false);
-    
-    console.log('Sync migration to FN-UTAMA completed successfully.');
-  } catch (err) {
-    console.error('Failed to run sync migration:', err);
+    lines.forEach((line, idx) => {
+      const match = line.match(itemRegex);
+      if (match) {
+        parsed.push({
+          id: 'item-' + Date.now() + '-' + idx,
+          name: match[1].trim(),
+          qty: parseInt(match[2], 10) || 1,
+          price: getRawNumber(match[3]) || 0
+        });
+      }
+    });
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+
+  // If title suggests multiple items, e.g. "rokok & kopi" or "kopi, rokok"
+  const title = t.description || 'Item';
+  if (title.includes('&') || title.includes(',')) {
+    const parts = title.split(/[&,]/).map(p => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      const splitPrice = Math.round(t.amount / parts.length);
+      return parts.map((part, idx) => ({
+        id: 'item-' + Date.now() + '-' + idx,
+        name: part,
+        price: splitPrice,
+        qty: 1
+      }));
+    }
+  }
+
+  // Default: single item with the title and amount
+  return [
+    {
+      id: 'item-' + Date.now() + '-0',
+      name: title,
+      price: t.amount || 0,
+      qty: 1
+    }
+  ];
+};
+
+const openTxCountingModal = (t) => {
+  selectedCountingTx = t;
+  const modal = document.getElementById('tx-counting-modal');
+  if (!modal) return;
+
+  const catList = [...CATEGORIES.income, ...CATEGORIES.expense];
+  const cat = catList.find(c => c.id === t.category) || { label: 'Lain-lain', icon: '🛍️' };
+
+  document.getElementById('tx-counting-cat-icon').innerText = cat.icon;
+  document.getElementById('tx-counting-cat-badge').innerText = cat.label;
+  document.getElementById('tx-counting-item-name').innerText = t.description;
+
+  // Extract items (e.g. rokok, kopi)
+  currentCountingItems = extractItemsFromTx(t);
+
+  // Set date
+  const dateInput = document.getElementById('tx-counting-date');
+  const txParts = t.date ? t.date.split('-') : [];
+  const today = new Date();
+  const currentDay = (selectedYear === String(today.getFullYear()) && selectedMonth === String(today.getMonth() + 1).padStart(2, '0'))
+    ? today.getDate()
+    : (txParts.length === 3 ? parseInt(txParts[2], 10) : 1);
+  dateInput.value = currentDay;
+
+  // Hide add item form initially
+  const addForm = document.getElementById('tx-add-item-form');
+  if (addForm) addForm.style.display = 'none';
+
+  renderTxCountingUI();
+  modal.style.display = 'flex';
+};
+
+const closeTxCountingModal = () => {
+  const modal = document.getElementById('tx-counting-modal');
+  if (modal) modal.style.display = 'none';
+  selectedCountingTx = null;
+  currentCountingItems = [];
+};
+
+const getTxCountingGrandTotal = () => {
+  let totalQty = 0;
+  let grandTotal = 0;
+  currentCountingItems.forEach(item => {
+    const q = Math.max(0, Number(item.qty) || 0);
+    const p = Math.max(0, Number(item.price) || 0);
+    totalQty += q;
+    grandTotal += (q * p);
+  });
+  return { totalQty, grandTotal };
+};
+
+const renderTxCountingUI = () => {
+  const listContainer = document.getElementById('tx-counting-items-list');
+  const emptyNotice = document.getElementById('tx-counting-empty-items');
+  const itemsBadge = document.getElementById('tx-counting-items-badge');
+  const totalQtyBadge = document.getElementById('tx-counting-total-qty-badge');
+  const formulaEl = document.getElementById('tx-counting-items-formula');
+  const totalDisplay = document.getElementById('tx-counting-total-display');
+
+  if (!listContainer) return;
+
+  const { totalQty, grandTotal } = getTxCountingGrandTotal();
+
+  if (itemsBadge) itemsBadge.innerText = `${currentCountingItems.length} item`;
+  if (totalQtyBadge) totalQtyBadge.innerText = totalQty;
+  if (totalDisplay) totalDisplay.innerText = formatIDR(grandTotal);
+
+  if (currentCountingItems.length === 0) {
+    listContainer.innerHTML = '';
+    if (emptyNotice) emptyNotice.style.display = 'block';
+    if (formulaEl) formulaEl.innerText = '0 item dihitung';
+    return;
+  }
+
+  if (emptyNotice) emptyNotice.style.display = 'none';
+  listContainer.innerHTML = '';
+
+  const activeNames = currentCountingItems
+    .filter(i => (Number(i.qty) || 0) > 0)
+    .map(i => `${i.name} (${i.qty}x)`);
+  if (formulaEl) {
+    formulaEl.innerText = activeNames.length > 0 
+      ? activeNames.slice(0, 2).join(' + ') + (activeNames.length > 2 ? ` +${activeNames.length - 2}` : '') 
+      : 'Kuantitas 0';
+  }
+
+  currentCountingItems.forEach(item => {
+    const qty = Math.max(0, Number(item.qty) || 0);
+    const price = Math.max(0, Number(item.price) || 0);
+    const lineTotal = qty * price;
+
+    const row = document.createElement('div');
+    row.className = 'cart-item-card has-qty';
+    row.style.padding = '0.65rem 0.85rem';
+    row.style.gap = '0.5rem';
+
+    row.innerHTML = `
+      <div style="flex: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.25rem;">
+          <span style="font-size: 0.72rem; color: #38bdf8; font-weight: 700; background: rgba(56, 189, 248, 0.15); padding: 0.1rem 0.35rem; border-radius: 4px;">(counting)</span>
+          <span style="font-weight: 600; font-size: 0.92rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.name}">${item.name}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; color: var(--text-secondary);">
+          <span>Harga:</span>
+          <div style="display: flex; align-items: center; gap: 0.2rem;">
+            <span style="font-size: 0.75rem; color: var(--text-muted);">Rp</span>
+            <input type="text" inputmode="numeric" class="tx-item-price-input" data-id="${item.id}" value="${formatNumberInput(String(price))}" style="width: 85px; background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 0.15rem 0.35rem; color: #fff; font-size: 0.8rem; font-weight: 600;" title="Ketik untuk mengubah harga satuan" />
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.65rem; flex-shrink: 0;">
+        <div class="cart-stepper" style="border-color: rgba(56, 189, 248, 0.4);">
+          <button type="button" class="cart-step-btn btn-tx-item-minus" data-id="${item.id}" title="Kurangi">−</button>
+          <input type="number" min="0" max="999" class="cart-qty-input tx-item-qty-input" data-id="${item.id}" value="${qty}" style="width: 32px; height: 28px; font-size: 0.85rem;" />
+          <button type="button" class="cart-step-btn btn-tx-item-plus" data-id="${item.id}" title="Tambah">+</button>
+        </div>
+        <div class="tx-item-line-total" style="font-size: 0.92rem; font-weight: 700; color: #f8fafc; min-width: 80px; text-align: right;">
+          ${formatIDR(lineTotal)}
+        </div>
+        <button type="button" class="btn-delete-cart-item btn-delete-tx-item" data-id="${item.id}" title="Hapus item ini" style="opacity: 0.6; padding: 0.2rem; cursor: pointer;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    `;
+
+    // Bind item events
+    const minusBtn = row.querySelector('.btn-tx-item-minus');
+    const plusBtn = row.querySelector('.btn-tx-item-plus');
+    const qtyInput = row.querySelector('.tx-item-qty-input');
+    const priceInput = row.querySelector('.tx-item-price-input');
+    const deleteBtn = row.querySelector('.btn-delete-tx-item');
+
+    minusBtn.addEventListener('click', () => {
+      if (item.qty > 0) {
+        item.qty -= 1;
+        renderTxCountingUI();
+      }
+    });
+
+    plusBtn.addEventListener('click', () => {
+      item.qty = (Number(item.qty) || 0) + 1;
+      renderTxCountingUI();
+    });
+
+    qtyInput.addEventListener('change', (e) => {
+      item.qty = Math.max(0, parseInt(e.target.value, 10) || 0);
+      renderTxCountingUI();
+    });
+
+    priceInput.addEventListener('input', (e) => {
+      e.target.value = formatNumberInput(e.target.value);
+      item.price = getRawNumber(e.target.value);
+      const lineEl = row.querySelector('.tx-item-line-total');
+      if (lineEl) lineEl.innerText = formatIDR(item.qty * item.price);
+      const { grandTotal } = getTxCountingGrandTotal();
+      if (totalDisplay) totalDisplay.innerText = formatIDR(grandTotal);
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      currentCountingItems = currentCountingItems.filter(i => i.id !== item.id);
+      renderTxCountingUI();
+    });
+
+    listContainer.appendChild(row);
+  });
+};
+
+const initTxCounting = () => {
+  const btnClose = document.getElementById('btn-close-tx-counting-modal');
+  const modal = document.getElementById('tx-counting-modal');
+  const dateInput = document.getElementById('tx-counting-date');
+  const btnRecordNew = document.getElementById('btn-tx-count-record-new');
+  const btnUpdateExisting = document.getElementById('btn-tx-count-update-existing');
+  const btnOpenCart = document.getElementById('btn-tx-count-open-cart');
+  
+  // Add item form controls
+  const btnOpenAddItem = document.getElementById('btn-tx-open-add-item');
+  const addItemForm = document.getElementById('tx-add-item-form');
+  const inputNewItemName = document.getElementById('input-tx-new-item-name');
+  const inputNewItemPrice = document.getElementById('input-tx-new-item-price');
+  const btnCancelAddItem = document.getElementById('btn-cancel-tx-add-item');
+
+  if (btnClose) btnClose.addEventListener('click', closeTxCountingModal);
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeTxCountingModal();
+    });
+  }
+
+  // Toggle add item form
+  if (btnOpenAddItem && addItemForm) {
+    btnOpenAddItem.addEventListener('click', () => {
+      const isHidden = addItemForm.style.display === 'none';
+      addItemForm.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden && inputNewItemName) {
+        inputNewItemName.value = '';
+        inputNewItemPrice.value = '';
+        inputNewItemName.focus();
+      }
+    });
+  }
+
+  if (btnCancelAddItem && addItemForm) {
+    btnCancelAddItem.addEventListener('click', () => {
+      addItemForm.style.display = 'none';
+    });
+  }
+
+  if (inputNewItemPrice) {
+    inputNewItemPrice.addEventListener('input', (e) => {
+      e.target.value = formatNumberInput(e.target.value);
+    });
+  }
+
+  if (addItemForm) {
+    addItemForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = inputNewItemName.value.trim();
+      const price = getRawNumber(inputNewItemPrice.value);
+
+      if (!name) {
+        alert('Nama item tidak boleh kosong!');
+        return;
+      }
+      if (price <= 0) {
+        alert('Harga item harus lebih besar dari Rp 0!');
+        return;
+      }
+
+      currentCountingItems.push({
+        id: 'item-' + Date.now(),
+        name,
+        price,
+        qty: 1
+      });
+
+      addItemForm.style.display = 'none';
+      renderTxCountingUI();
+    });
+  }
+
+  // Record as new repeat purchase transaction
+  if (btnRecordNew) {
+    btnRecordNew.addEventListener('click', () => {
+      if (!selectedCountingTx) return;
+      const { grandTotal } = getTxCountingGrandTotal();
+      if (grandTotal <= 0) {
+        alert('Total transaksi harus lebih besar dari Rp 0!');
+        return;
+      }
+
+      const dayVal = parseInt(dateInput.value, 10);
+      if (isNaN(dayVal) || dayVal < 1 || dayVal > 31) {
+        alert('Tanggal harus antara 1 dan 31!');
+        return;
+      }
+
+      const targetDate = `${selectedYear}-${selectedMonth}-${String(dayVal).padStart(2, '0')}`;
+      
+      // Build clean notes breakdown
+      const itemLines = currentCountingItems.map(i => `• ${i.name} (${i.qty}x @ ${formatIDR(i.price)} = ${formatIDR(i.qty * i.price)})`);
+      const notesText = `Rincian Item:\n${itemLines.join('\n')}\nTotal: ${formatIDR(grandTotal)}`;
+
+      addTransaction({
+        description: selectedCountingTx.description,
+        amount: grandTotal,
+        type: selectedCountingTx.type,
+        category: selectedCountingTx.category,
+        date: targetDate,
+        items: currentCountingItems,
+        notes: notesText,
+        account: selectedCountingTx.account || 'gaji'
+      });
+
+      alert(`Pembelian baru "${selectedCountingTx.description}" berhasil dicatat sebesar ${formatIDR(grandTotal)}!`);
+      closeTxCountingModal();
+    });
+  }
+
+  // Update existing transaction
+  if (btnUpdateExisting) {
+    btnUpdateExisting.addEventListener('click', () => {
+      if (!selectedCountingTx) return;
+      const { grandTotal } = getTxCountingGrandTotal();
+      if (grandTotal <= 0) {
+        alert('Total transaksi harus lebih besar dari Rp 0!');
+        return;
+      }
+
+      // Build clean notes breakdown
+      const itemLines = currentCountingItems.map(i => `• ${i.name} (${i.qty}x @ ${formatIDR(i.price)} = ${formatIDR(i.qty * i.price)})`);
+      const notesText = `Rincian Item:\n${itemLines.join('\n')}\nTotal: ${formatIDR(grandTotal)}`;
+
+      editTransaction(selectedCountingTx.id, {
+        amount: grandTotal,
+        items: currentCountingItems,
+        notes: notesText
+      });
+
+      alert(`Transaksi "${selectedCountingTx.description}" berhasil diperbarui menjadi ${formatIDR(grandTotal)}!`);
+      closeTxCountingModal();
+    });
+  }
+
+  // Open Cart for this transaction's category
+  if (btnOpenCart) {
+    btnOpenCart.addEventListener('click', () => {
+      if (selectedCountingTx && selectedCountingTx.category) {
+        activeCartCategory = selectedCountingTx.category;
+      }
+      closeTxCountingModal();
+      openCartModal();
+    });
   }
 };
 
@@ -1409,18 +2693,13 @@ const init = async () => {
   localStorage.setItem('et_selected_month', selectedMonth);
   localStorage.setItem('et_selected_year', selectedYear);
 
-  initSelectors();
-  populateCategoryFilterOptions('gaji');
-  bindEvents();
+  try { initSelectors(); } catch (e) { console.error('initSelectors error:', e); }
+  try { populateCategoryFilterOptions('gaji'); } catch (e) { console.error('populateCategoryFilterOptions error:', e); }
+  try { bindEvents(); } catch (e) { console.error('bindEvents error:', e); }
+  try { initCart(); } catch (e) { console.error('initCart error:', e); }
+  try { initTxCounting(); } catch (e) { console.error('initTxCounting error:', e); }
   
-  setupFirebaseListener();
-  initSyncCodeUI();
-  renderAll();
-
-  // Run migration in the background so it does not block the UI render on startup
-  if (syncCode === DEFAULT_SYNC_CODE && localStorage.getItem('et_sync_migrated_v2') !== 'true') {
-    migrateToDefaultSyncCode();
-  }
+  try { renderAll(); } catch (e) { console.error('renderAll error:', e); }
 };
 
 if (document.readyState === 'loading') {
