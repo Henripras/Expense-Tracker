@@ -38,6 +38,12 @@ const CATEGORIES = {
   ]
 };
 
+const getCategoryLabel = (type, catId) => {
+  const list = CATEGORIES[type] || [];
+  const found = list.find(c => c.id === catId || c.label === catId);
+  return found ? found.label : (catId || '-');
+};
+
 // Seed/Mock Data for both accounts
 const getSeedTransactions = () => {
   const now = new Date();
@@ -344,6 +350,28 @@ const syncToSupabase = async () => {
       updateSupabaseStatusBadge('warning', 'Tabel Belum Siap');
     } else {
       updateSupabaseStatusBadge('online');
+    }
+
+    // Also sync structured records into 'transaksi' table
+    if (transactions && transactions.length > 0) {
+      const rows = transactions.map(t => ({
+        id: t.id,
+        kategori: t.type === 'income' ? 'Pemasukan' : 'Pengeluaran',
+        jenis: getCategoryLabel(t.type, t.category),
+        nama: t.description || '-',
+        jumlah_uang: Number(t.amount) || 0,
+        tanggal: t.date || '',
+        catatan: t.notes || '',
+        sync_code: syncCode
+      }));
+
+      client.from('transaksi').upsert(rows).then(({ error: txErr }) => {
+        if (txErr) {
+          console.warn('Supabase transaksi table notice:', txErr.message);
+        } else {
+          console.log('✅ Berhasil menyinkronkan data ke tabel transaksi!');
+        }
+      }).catch(() => {});
     }
   } catch (err) {
     console.error('Failed to sync to Supabase:', err);
@@ -744,6 +772,11 @@ const deleteTransaction = (id) => {
     transactions = transactions.filter(t => t.id !== id);
     saveToLocalStorage();
     renderAll();
+
+    const client = getSupabaseClient();
+    if (client) {
+      client.from('transaksi').delete().eq('id', id).then(() => {}).catch(() => {});
+    }
   }
 };
 
