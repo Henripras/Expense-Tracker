@@ -352,10 +352,12 @@ const syncToSupabase = async () => {
 };
 
 // Save states to localstorage
-const saveToLocalStorage = () => {
+const saveToLocalStorage = (skipCloudSync = false) => {
   localStorage.setItem('et_transactions', JSON.stringify(transactions));
   localStorage.setItem('et_budgets', JSON.stringify(budgets));
-  syncToSupabase();
+  if (!skipCloudSync) {
+    syncToSupabase();
+  }
 };
 
 const setupSupabaseRealtimeListener = () => {
@@ -2698,6 +2700,8 @@ const init = async () => {
   try { bindEvents(); } catch (e) { console.error('bindEvents error:', e); }
   try { initCart(); } catch (e) { console.error('initCart error:', e); }
   try { initTxCounting(); } catch (e) { console.error('initTxCounting error:', e); }
+  try { initSyncCodeUI(); } catch (e) { console.error('initSyncCodeUI error:', e); }
+  try { setupSupabaseRealtimeListener(); } catch (e) { console.error('setupSupabaseRealtimeListener error:', e); }
   
   try { renderAll(); } catch (e) { console.error('renderAll error:', e); }
 };

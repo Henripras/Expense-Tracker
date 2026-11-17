@@ -28,6 +28,8 @@ temp_rekap_profile/
 temp_puppeteer_profile/
 
 .vercel
+.env
+.env*.local
 
 # Android APK binaries
 *.apk

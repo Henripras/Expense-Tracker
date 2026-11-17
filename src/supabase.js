@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Default Supabase project credentials (can be configured via UI in localStorage)
+// Pre-configured Supabase project credentials for Expense Tracker
+const DEFAULT_URL = import.meta.env.VITE_SUPABASE_URL || 'https://abavanojrevxafulylbt.supabase.co';
+const DEFAULT_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
 const STORAGE_URL_KEY = 'et_supabase_url';
 const STORAGE_ANON_KEY = 'et_supabase_anon_key';
 
@@ -8,8 +11,8 @@ let cachedClient = null;
 
 export const getSupabaseConfig = () => {
   return {
-    url: localStorage.getItem(STORAGE_URL_KEY) || '',
-    anonKey: localStorage.getItem(STORAGE_ANON_KEY) || ''
+    url: (localStorage.getItem(STORAGE_URL_KEY) || DEFAULT_URL).trim(),
+    anonKey: (localStorage.getItem(STORAGE_ANON_KEY) || DEFAULT_ANON_KEY).trim()
   };
 };
 
