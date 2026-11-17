@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 // Pre-configured Supabase project credentials for Expense Tracker
 const DEFAULT_URL = import.meta.env.VITE_SUPABASE_URL || 'https://abavanojrevxafulylbt.supabase.co';
-const DEFAULT_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const DEFAULT_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Cmdkn-PTmVk-SGIomQwMlA_2JtAgP2h';
 
 const STORAGE_URL_KEY = 'et_supabase_url';
 const STORAGE_ANON_KEY = 'et_supabase_anon_key';
