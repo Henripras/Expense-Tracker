@@ -1322,19 +1322,9 @@ const openFormModal = (editData = null) => {
       if (inDesc) inDesc.value = '';
       if (inAmt) inAmt.value = '';
       
-      // Default to last entered day if exists, otherwise today's date or 1
-      const lastEnteredDay = localStorage.getItem('et_last_entered_day');
-      if (lastEnteredDay && inDate) {
-        inDate.value = parseInt(lastEnteredDay, 10);
-      } else if (inDate) {
-        const today = new Date();
-        const todayYear = String(today.getFullYear());
-        const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
-        if (selectedYear === todayYear && selectedMonth === todayMonth) {
-          inDate.value = today.getDate();
-        } else {
-          inDate.value = 1;
-        }
+      // Default to 25
+      if (inDate) {
+        inDate.value = 25;
       }
       
       if (inNotes) inNotes.value = '';
