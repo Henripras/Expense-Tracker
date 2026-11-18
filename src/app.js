@@ -1312,6 +1312,9 @@ const openFormModal = (editData = null) => {
       
       populateModalCategories(editData.type || 'expense');
       if (inCategory && editData.category) inCategory.value = editData.category;
+
+      pendingCountingItems = editData.items && Array.isArray(editData.items) ? JSON.parse(JSON.stringify(editData.items)) : [];
+      updateCountingBadgeInForm();
     } else {
       editingTxId = null;
       editingTxYear = null;
@@ -1333,6 +1336,9 @@ const openFormModal = (editData = null) => {
       if (inCategory && CATEGORIES.expense.length > 0) {
         inCategory.value = CATEGORIES.expense[0].id;
       }
+
+      pendingCountingItems = [];
+      updateCountingBadgeInForm();
     }
 
     updateFormTypeButtons();
@@ -1344,6 +1350,8 @@ const openFormModal = (editData = null) => {
 const closeFormModal = () => {
   const modal = document.getElementById('transaction-modal') || transactionModal;
   if (modal) modal.style.display = 'none';
+  pendingCountingItems = [];
+  updateCountingBadgeInForm();
 };
 
 window.openFormModal = openFormModal;
@@ -1579,7 +1587,8 @@ const bindEvents = () => {
         category: cat,
         date: dateStr,
         notes: nts,
-        account: acc
+        account: acc,
+        items: pendingCountingItems && pendingCountingItems.length > 0 ? pendingCountingItems : undefined
       };
 
       if (editingTxId) {
@@ -1589,6 +1598,23 @@ const bindEvents = () => {
       }
 
       closeFormModal();
+    });
+  }
+
+  // Counting Triggers from Transaction Form Modal
+  const btnOpenCounting = document.getElementById('btn-open-counting-from-form');
+  const btnEditCounting = document.getElementById('btn-edit-counting-items');
+
+  if (btnOpenCounting) {
+    btnOpenCounting.addEventListener('click', (e) => {
+      e.preventDefault();
+      openTxCountingModalForForm();
+    });
+  }
+  if (btnEditCounting) {
+    btnEditCounting.addEventListener('click', (e) => {
+      e.preventDefault();
+      openTxCountingModalForForm();
     });
   }
 
@@ -2428,6 +2454,30 @@ const initCart = () => {
 // ==========================================
 let selectedCountingTx = null;
 let currentCountingItems = [];
+let isNewCountingTx = false;
+let pendingCountingItems = [];
+
+// Update the visual indicator badge in the transaction form
+const updateCountingBadgeInForm = () => {
+  const badge = document.getElementById('counting-summary-badge');
+  const textEl = document.getElementById('counting-summary-text');
+  if (!badge) return;
+  if (pendingCountingItems && pendingCountingItems.length > 0) {
+    let totalQty = 0;
+    let grandTotal = 0;
+    pendingCountingItems.forEach(i => {
+      const q = Math.max(0, Number(i.qty) || 0);
+      const p = Math.max(0, Number(i.price) || 0);
+      totalQty += q;
+      grandTotal += q * p;
+    });
+    if (textEl) textEl.innerText = `🧮 Dihitung dari ${totalQty} pcs (${pendingCountingItems.length} item) • ${formatIDR(grandTotal)}`;
+    badge.style.display = 'flex';
+  } else {
+    badge.style.display = 'none';
+  }
+};
+window.updateCountingBadgeInForm = updateCountingBadgeInForm;
 
 // Helper to extract or initialize items for a transaction
 const extractItemsFromTx = (t) => {
@@ -2485,7 +2535,100 @@ const extractItemsFromTx = (t) => {
   ];
 };
 
+// Open Counting Modal from Transaction Form Modal (Tambah Transaksi / Edit Transaksi)
+const openTxCountingModalForForm = () => {
+  isNewCountingTx = true;
+  selectedCountingTx = null;
+  const modal = document.getElementById('tx-counting-modal');
+  if (!modal) return;
+
+  const inDesc = document.getElementById('input-description') || inputDescription;
+  const inAmt = document.getElementById('input-amount') || inputAmount;
+  const inDate = document.getElementById('input-date') || inputDate;
+  const inCat = document.getElementById('input-category') || inputCategory;
+
+  const descVal = inDesc ? inDesc.value.trim() : '';
+  const amtVal = inAmt ? getRawNumber(inAmt.value) : 0;
+  const dateVal = inDate ? parseInt(inDate.value, 10) : 25;
+  const catVal = inCat ? inCat.value : '';
+
+  const catList = [...CATEGORIES.income, ...CATEGORIES.expense];
+  const cat = catList.find(c => c.id === catVal) || { label: 'Umum', icon: '🛍️' };
+
+  const iconEl = document.getElementById('tx-counting-cat-icon');
+  const badgeEl = document.getElementById('tx-counting-cat-badge');
+  const nameEl = document.getElementById('tx-counting-item-name');
+  const titleInput = document.getElementById('tx-counting-title-input');
+
+  if (iconEl) iconEl.innerText = cat.icon;
+  if (badgeEl) badgeEl.innerText = cat.label;
+  
+  if (nameEl) nameEl.style.display = 'none';
+  if (titleInput) {
+    titleInput.style.display = 'block';
+    titleInput.value = descVal;
+    titleInput.placeholder = 'Nama transaksi (misal: Jajan, Belanja, Rokok)';
+  }
+
+  // Items to use:
+  if (pendingCountingItems && pendingCountingItems.length > 0) {
+    currentCountingItems = JSON.parse(JSON.stringify(pendingCountingItems));
+  } else if (descVal && amtVal > 0) {
+    currentCountingItems = [
+      {
+        id: 'item-' + Date.now(),
+        name: descVal,
+        price: amtVal,
+        qty: 1
+      }
+    ];
+  } else if (descVal) {
+    currentCountingItems = [
+      {
+        id: 'item-' + Date.now(),
+        name: descVal,
+        price: 0,
+        qty: 1
+      }
+    ];
+  } else {
+    currentCountingItems = [];
+  }
+
+  // Set date
+  const dateInput = document.getElementById('tx-counting-date');
+  if (dateInput) {
+    dateInput.value = (dateVal >= 1 && dateVal <= 31) ? dateVal : 25;
+  }
+
+  // Configure modal buttons for Form mode
+  const btnApply = document.getElementById('btn-tx-count-apply-to-form');
+  const btnSaveDirect = document.getElementById('btn-tx-count-save-direct');
+  const btnUpdateExisting = document.getElementById('btn-tx-count-update-existing');
+  const btnRecordNew = document.getElementById('btn-tx-count-record-new');
+
+  if (btnApply) btnApply.style.display = 'flex';
+  if (btnSaveDirect) btnSaveDirect.style.display = 'flex';
+  if (btnUpdateExisting) btnUpdateExisting.style.display = 'none';
+  if (btnRecordNew) btnRecordNew.style.display = 'none';
+
+  // Toggle add item form
+  const addForm = document.getElementById('tx-add-item-form');
+  if (addForm) {
+    addForm.style.display = currentCountingItems.length === 0 ? 'flex' : 'none';
+    if (currentCountingItems.length === 0) {
+      const inputNewItemName = document.getElementById('input-tx-new-item-name');
+      if (inputNewItemName) setTimeout(() => inputNewItemName.focus(), 150);
+    }
+  }
+
+  renderTxCountingUI();
+  modal.style.display = 'flex';
+};
+window.openTxCountingModalForForm = openTxCountingModalForForm;
+
 const openTxCountingModal = (t) => {
+  isNewCountingTx = false;
   selectedCountingTx = t;
   const modal = document.getElementById('tx-counting-modal');
   if (!modal) return;
@@ -2493,9 +2636,20 @@ const openTxCountingModal = (t) => {
   const catList = [...CATEGORIES.income, ...CATEGORIES.expense];
   const cat = catList.find(c => c.id === t.category) || { label: 'Lain-lain', icon: '🛍️' };
 
-  document.getElementById('tx-counting-cat-icon').innerText = cat.icon;
-  document.getElementById('tx-counting-cat-badge').innerText = cat.label;
-  document.getElementById('tx-counting-item-name').innerText = t.description;
+  const iconEl = document.getElementById('tx-counting-cat-icon');
+  const badgeEl = document.getElementById('tx-counting-cat-badge');
+  const nameEl = document.getElementById('tx-counting-item-name');
+  const titleInput = document.getElementById('tx-counting-title-input');
+
+  if (iconEl) iconEl.innerText = cat.icon;
+  if (badgeEl) badgeEl.innerText = cat.label;
+  if (nameEl) {
+    nameEl.style.display = 'block';
+    nameEl.innerText = t.description;
+  }
+  if (titleInput) {
+    titleInput.style.display = 'none';
+  }
 
   // Extract items (e.g. rokok, kopi)
   currentCountingItems = extractItemsFromTx(t);
@@ -2507,7 +2661,18 @@ const openTxCountingModal = (t) => {
   const currentDay = (selectedYear === String(today.getFullYear()) && selectedMonth === String(today.getMonth() + 1).padStart(2, '0'))
     ? today.getDate()
     : (txParts.length === 3 ? parseInt(txParts[2], 10) : 1);
-  dateInput.value = currentDay;
+  if (dateInput) dateInput.value = currentDay;
+
+  // Configure modal buttons for existing transaction mode
+  const btnApply = document.getElementById('btn-tx-count-apply-to-form');
+  const btnSaveDirect = document.getElementById('btn-tx-count-save-direct');
+  const btnUpdateExisting = document.getElementById('btn-tx-count-update-existing');
+  const btnRecordNew = document.getElementById('btn-tx-count-record-new');
+
+  if (btnApply) btnApply.style.display = 'none';
+  if (btnSaveDirect) btnSaveDirect.style.display = 'none';
+  if (btnUpdateExisting) btnUpdateExisting.style.display = 'flex';
+  if (btnRecordNew) btnRecordNew.style.display = 'flex';
 
   // Hide add item form initially
   const addForm = document.getElementById('tx-add-item-form');
@@ -2543,6 +2708,7 @@ const renderTxCountingUI = () => {
   const totalQtyBadge = document.getElementById('tx-counting-total-qty-badge');
   const formulaEl = document.getElementById('tx-counting-items-formula');
   const totalDisplay = document.getElementById('tx-counting-total-display');
+  const btnApplyToForm = document.getElementById('btn-tx-count-apply-to-form');
 
   if (!listContainer) return;
 
@@ -2551,6 +2717,9 @@ const renderTxCountingUI = () => {
   if (itemsBadge) itemsBadge.innerText = `${currentCountingItems.length} item`;
   if (totalQtyBadge) totalQtyBadge.innerText = totalQty;
   if (totalDisplay) totalDisplay.innerText = formatIDR(grandTotal);
+  if (btnApplyToForm) {
+    btnApplyToForm.innerText = `✓ Terapkan ke Formulir Transaksi (${formatIDR(grandTotal)})`;
+  }
 
   if (currentCountingItems.length === 0) {
     listContainer.innerHTML = '';
@@ -2644,6 +2813,9 @@ const renderTxCountingUI = () => {
       if (lineEl) lineEl.innerText = formatIDR(item.qty * item.price);
       const { grandTotal } = getTxCountingGrandTotal();
       if (totalDisplay) totalDisplay.innerText = formatIDR(grandTotal);
+      if (btnApplyToForm) {
+        btnApplyToForm.innerText = `✓ Terapkan ke Formulir Transaksi (${formatIDR(grandTotal)})`;
+      }
     });
 
     deleteBtn.addEventListener('click', () => {
@@ -2659,6 +2831,8 @@ const initTxCounting = () => {
   const btnClose = document.getElementById('btn-close-tx-counting-modal');
   const modal = document.getElementById('tx-counting-modal');
   const dateInput = document.getElementById('tx-counting-date');
+  const btnApplyToForm = document.getElementById('btn-tx-count-apply-to-form');
+  const btnSaveDirect = document.getElementById('btn-tx-count-save-direct');
   const btnRecordNew = document.getElementById('btn-tx-count-record-new');
   const btnUpdateExisting = document.getElementById('btn-tx-count-update-existing');
   const btnOpenCart = document.getElementById('btn-tx-count-open-cart');
@@ -2726,6 +2900,120 @@ const initTxCounting = () => {
 
       addItemForm.style.display = 'none';
       renderTxCountingUI();
+    });
+  }
+
+  // Apply to transaction form
+  if (btnApplyToForm) {
+    btnApplyToForm.addEventListener('click', () => {
+      const { totalQty, grandTotal } = getTxCountingGrandTotal();
+      if (grandTotal <= 0 && currentCountingItems.length === 0) {
+        alert('Silakan tambahkan minimal 1 item dengan kuantitas dan harga lebih dari Rp 0!');
+        return;
+      }
+
+      const inDesc = document.getElementById('input-description') || inputDescription;
+      const inAmt = document.getElementById('input-amount') || inputAmount;
+      const inDate = document.getElementById('input-date') || inputDate;
+      const inNotes = document.getElementById('input-notes') || inputNotes;
+      const titleInput = document.getElementById('tx-counting-title-input');
+
+      // Update description if provided or blank
+      const customTitle = titleInput ? titleInput.value.trim() : '';
+      if (customTitle && inDesc) {
+        inDesc.value = customTitle;
+      } else if (inDesc && (!inDesc.value.trim() || inDesc.value.trim() === 'Transaksi Baru')) {
+        const itemNames = currentCountingItems.filter(i => (Number(i.qty) || 0) > 0).map(i => i.name);
+        if (itemNames.length > 0) inDesc.value = itemNames.join(', ');
+      }
+
+      // Update amount
+      if (inAmt) {
+        inAmt.value = formatNumberInput(String(grandTotal));
+      }
+
+      // Update date from modal if valid
+      const d = parseInt(dateInput.value, 10);
+      if (!isNaN(d) && d >= 1 && d <= 31 && inDate) {
+        inDate.value = d;
+      }
+
+      // Format notes breakdown
+      const activeItems = currentCountingItems.filter(i => (Number(i.qty) || 0) > 0);
+      const itemLines = activeItems.map(i => `• ${i.name} (${i.qty}x @ ${formatIDR(i.price)} = ${formatIDR(i.qty * i.price)})`);
+      const breakdownText = `Rincian Item:\n${itemLines.join('\n')}\nTotal: ${formatIDR(grandTotal)}`;
+      if (inNotes) {
+        const currentNotes = inNotes.value.trim();
+        if (!currentNotes || currentNotes.startsWith('Rincian Item:')) {
+          inNotes.value = breakdownText;
+        } else {
+          inNotes.value = currentNotes + '\n\n' + breakdownText;
+        }
+      }
+
+      // Save pending items
+      pendingCountingItems = JSON.parse(JSON.stringify(currentCountingItems));
+      updateCountingBadgeInForm();
+
+      closeTxCountingModal();
+    });
+  }
+
+  // Save directly without going back to form
+  if (btnSaveDirect) {
+    btnSaveDirect.addEventListener('click', () => {
+      const { grandTotal } = getTxCountingGrandTotal();
+      if (grandTotal <= 0) {
+        alert('Total transaksi harus lebih besar dari Rp 0!');
+        return;
+      }
+
+      const inDesc = document.getElementById('input-description') || inputDescription;
+      const inDate = document.getElementById('input-date') || inputDate;
+      const inCat = document.getElementById('input-category') || inputCategory;
+      const inAcc = document.getElementById('input-account') || inputAccount;
+      const inNotes = document.getElementById('input-notes') || inputNotes;
+      const titleInput = document.getElementById('tx-counting-title-input');
+
+      const customTitle = titleInput ? titleInput.value.trim() : '';
+      const existingDesc = inDesc ? inDesc.value.trim() : '';
+      const activeItems = currentCountingItems.filter(i => (Number(i.qty) || 0) > 0);
+      const fallbackTitle = activeItems.length > 0 ? activeItems.map(i => i.name).join(', ') : 'Transaksi Baru';
+      const finalTitle = customTitle || existingDesc || fallbackTitle;
+
+      const dayVal = parseInt(dateInput.value, 10) || (inDate ? parseInt(inDate.value, 10) : 25) || 25;
+      const targetDate = `${selectedYear}-${selectedMonth}-${String(dayVal).padStart(2, '0')}`;
+
+      const catVal = inCat ? inCat.value : 'makanan';
+      const accVal = inAcc ? inAcc.value : 'gaji';
+
+      const itemLines = activeItems.map(i => `• ${i.name} (${i.qty}x @ ${formatIDR(i.price)} = ${formatIDR(i.qty * i.price)})`);
+      let notesText = `Rincian Item:\n${itemLines.join('\n')}\nTotal: ${formatIDR(grandTotal)}`;
+      if (inNotes && inNotes.value.trim() && !inNotes.value.trim().startsWith('Rincian Item:')) {
+        notesText = inNotes.value.trim() + '\n\n' + notesText;
+      }
+
+      const newTxPayload = {
+        description: finalTitle,
+        amount: grandTotal,
+        type: currentFormType || 'expense',
+        category: catVal,
+        date: targetDate,
+        items: currentCountingItems,
+        notes: notesText,
+        account: accVal
+      };
+
+      if (editingTxId) {
+        editTransaction(editingTxId, newTxPayload);
+        alert(`Transaksi "${finalTitle}" berhasil diperbarui sebesar ${formatIDR(grandTotal)}!`);
+      } else {
+        addTransaction(newTxPayload);
+        alert(`Transaksi baru "${finalTitle}" berhasil disimpan sebesar ${formatIDR(grandTotal)}!`);
+      }
+
+      closeTxCountingModal();
+      closeFormModal();
     });
   }
 
@@ -2804,8 +3092,38 @@ const initTxCounting = () => {
   }
 };
 
+// App Opener / Splash Screen Controller
+const initSplashOpener = () => {
+  const splash = document.getElementById('app-splash-opener');
+  const btnSkip = document.getElementById('btn-skip-opener');
+  if (!splash) return;
+
+  const closeOpener = () => {
+    if (splash.style.opacity === '0') return;
+    splash.style.opacity = '0';
+    splash.style.pointerEvents = 'none';
+    setTimeout(() => {
+      splash.style.display = 'none';
+    }, 650);
+  };
+
+  if (btnSkip) {
+    btnSkip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeOpener();
+    });
+  }
+
+  splash.addEventListener('click', closeOpener);
+
+  // Auto close after GIF animation completes (~4.6s)
+  setTimeout(closeOpener, 4600);
+};
+
 // Start application
 const init = async () => {
+  try { initSplashOpener(); } catch (e) { console.error('initSplashOpener error:', e); }
+
   // Ensure the selected month and year are locked into localStorage on startup
   localStorage.setItem('et_selected_month', selectedMonth);
   localStorage.setItem('et_selected_year', selectedYear);

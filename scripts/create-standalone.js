@@ -14,24 +14,24 @@ if (jsFile && cssFile) {
   const jsContent = fs.readFileSync(path.join(assetsDir, jsFile), 'utf8');
   const cssContent = fs.readFileSync(path.join(assetsDir, cssFile), 'utf8');
 
-  // Replace external css link with inline style
-  html = html.replace(/<link rel="stylesheet"[^>]*href="[^"]*"[^>]*>/i, `<style>${cssContent}</style>`);
+  // Replace external css link with inline style (using replacer function so $ in css is not treated as replacement pattern)
+  html = html.replace(/<link rel="stylesheet"[^>]*href="[^"]*"[^>]*>/i, () => `<style>${cssContent}</style>`);
   
-  // Replace module script with inline script (no type="module" CORS restrictions on file:///)
-  html = html.replace(/<script type="module"[^>]*src="[^"]*"[^>]*><\/script>/i, `<script>${jsContent}</script>`);
+  // Replace module script with inline script (using replacer function so $&, $' in minified js are not substituted)
+  html = html.replace(/<script type="module"[^>]*src="[^"]*"[^>]*><\/script>/i, () => `<script>${jsContent}</script>`);
 
   // Inline all image assets in dist/assets as base64
-  const imageFiles = files.filter(f => f.match(/\.(png|jpe?g|svg|webp|ico)$/i));
+  const imageFiles = files.filter(f => f.match(/\.(png|jpe?g|svg|webp|ico|gif)$/i));
   imageFiles.forEach(imgFile => {
     const imgPath = path.join(assetsDir, imgFile);
     const ext = path.extname(imgFile).slice(1).toLowerCase();
-    const mime = ext === 'svg' ? 'image/svg+xml' : (ext === 'jpg' ? 'image/jpeg' : `image/${ext}`);
+    const mime = ext === 'svg' ? 'image/svg+xml' : (ext === 'jpg' ? 'image/jpeg' : (ext === 'gif' ? 'image/gif' : `image/${ext}`));
     const imgB64 = fs.readFileSync(imgPath).toString('base64');
     const dataUrl = `data:${mime};base64,${imgB64}`;
     
     // Replace all references in html or css/js
     const regex = new RegExp(`["']?(?:/|\\./)?assets/${imgFile.replace('.', '\\.')}["']?`, 'g');
-    html = html.replace(regex, `"${dataUrl}"`);
+    html = html.replace(regex, () => `"${dataUrl}"`);
   });
 
   // Also replace any remaining /logo.png references
@@ -39,8 +39,16 @@ if (jsFile && cssFile) {
   if (fs.existsSync(logoPath)) {
     const logoB64 = fs.readFileSync(logoPath).toString('base64');
     const logoDataUrl = `data:image/png;base64,${logoB64}`;
-    html = html.replace(/src=["'](?:\.\/|\/)?logo\.png["']/g, `src="${logoDataUrl}"`);
-    html = html.replace(/href=["'](?:\.\/|\/)?logo\.png["']/g, `href="${logoDataUrl}"`);
+    html = html.replace(/src=["'](?:\.\/|\/)?logo\.png["']/g, () => `src="${logoDataUrl}"`);
+    html = html.replace(/href=["'](?:\.\/|\/)?logo\.png["']/g, () => `href="${logoDataUrl}"`);
+  }
+
+  // Also replace any /opener.gif references with inlined base64 GIF
+  const openerPath = path.resolve('public/opener.gif');
+  if (fs.existsSync(openerPath)) {
+    const openerB64 = fs.readFileSync(openerPath).toString('base64');
+    const openerDataUrl = `data:image/gif;base64,${openerB64}`;
+    html = html.replace(/src=["'](?:\.\/|\/)?opener\.gif["']/g, () => `src="${openerDataUrl}"`);
   }
 
   fs.writeFileSync(path.join(distDir, 'index.html'), html, 'utf8');
