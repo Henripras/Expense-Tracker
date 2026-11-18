@@ -44,6 +44,13 @@ const getCategoryLabel = (type, catId) => {
   return found ? found.label : (catId || '-');
 };
 
+const getCategoryId = (type, labelOrId) => {
+  if (!labelOrId) return type === 'income' ? 'pekerjaan' : 'makanan';
+  const list = CATEGORIES[type] || [];
+  const found = list.find(c => c.id === labelOrId || c.label === labelOrId);
+  return found ? found.id : labelOrId;
+};
+
 // Seed/Mock Data for both accounts
 const getSeedTransactions = () => {
   const now = new Date();
@@ -395,85 +402,157 @@ const setupSupabaseRealtimeListener = () => {
     return;
   }
 
+  // Remove existing realtime channels if any
   if (supabaseRealtimeChannel) {
-    try {
-      client.removeChannel(supabaseRealtimeChannel);
-    } catch (e) {}
+    try { client.removeChannel(supabaseRealtimeChannel); } catch (e) {}
     supabaseRealtimeChannel = null;
   }
 
   updateSupabaseStatusBadge('warning', 'Menghubungkan...');
 
-  // 1. Initial Fetch to get latest data from Supabase
-  client
-    .from('sync_data')
-    .select('*')
-    .eq('sync_code', syncCode)
-    .single()
-    .then(({ data, error }) => {
-      if (data && !error) {
-        const cloudTime = Number(data.updated_at) || 0;
-        const localTime = Number(localStorage.getItem('et_last_sync_time') || '0');
+  // 1. Initial Fetch from Supabase ('transaksi' table & 'sync_data')
+  const performInitialFetch = async () => {
+    try {
+      let remoteTxs = null;
 
-        if (cloudTime > localTime) {
-          isUpdatingFromSync = true;
-          transactions = data.transactions || [];
-          budgets = data.budgets || {};
-          if (data.cart_items && Array.isArray(data.cart_items) && typeof cartItems !== 'undefined') {
-            cartItems = data.cart_items;
-            localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
-          }
-          lastSyncTimestamp = cloudTime;
-          localStorage.setItem('et_last_sync_time', String(lastSyncTimestamp));
+      // A. Query primary 'transaksi' table
+      const { data: dbTxs, error: txError } = await client
+        .from('transaksi')
+        .select('*')
+        .eq('sync_code', syncCode)
+        .order('tanggal', { ascending: false });
+
+      if (dbTxs && !txError && dbTxs.length > 0) {
+        remoteTxs = dbTxs.map(row => {
+          const type = row.kategori === 'Pemasukan' ? 'income' : 'expense';
+          return {
+            id: row.id,
+            description: row.nama || '-',
+            amount: Number(row.jumlah_uang) || 0,
+            type: type,
+            category: getCategoryId(type, row.jenis),
+            date: row.tanggal,
+            notes: row.catatan || '',
+            account: 'gaji'
+          };
+        });
+      }
+
+      // B. Query 'sync_data' table (for budgets, cart items, or fallback txs)
+      const { data: syncData, error: syncError } = await client
+        .from('sync_data')
+        .select('*')
+        .eq('sync_code', syncCode)
+        .single();
+
+      if (syncData && !syncError) {
+        if (syncData.budgets && typeof syncData.budgets === 'object') {
+          budgets = { ...budgets, ...syncData.budgets };
+          localStorage.setItem('et_budgets', JSON.stringify(budgets));
+        }
+        if (syncData.cart_items && Array.isArray(syncData.cart_items) && typeof cartItems !== 'undefined') {
+          cartItems = syncData.cart_items;
+          localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
+        }
+        if (!remoteTxs && syncData.transactions && Array.isArray(syncData.transactions) && syncData.transactions.length > 0) {
+          remoteTxs = syncData.transactions;
+        }
+      }
+
+      if (remoteTxs && remoteTxs.length > 0) {
+        isUpdatingFromSync = true;
+        transactions = remoteTxs;
+        localStorage.setItem('et_transactions', JSON.stringify(transactions));
+        isUpdatingFromSync = false;
+        renderAll();
+        if (typeof renderCartUI === 'function') renderCartUI();
+        console.log(`✅ Berhasil menyinkronkan ${transactions.length} transaksi dari Supabase!`);
+      } else if (transactions.length > 0) {
+        // Cloud is empty but local has data: upload local transactions to cloud
+        syncToSupabase();
+      }
+
+      updateSupabaseStatusBadge('online');
+    } catch (err) {
+      console.warn('Initial fetch notice:', err);
+    }
+  };
+
+  performInitialFetch();
+
+  // 2. Realtime Subscription on 'transaksi' table
+  supabaseRealtimeChannel = client
+    .channel(`realtime_all_${syncCode}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'transaksi',
+      filter: `sync_code=eq.${syncCode}`
+    }, (payload) => {
+      console.log('⚡ Realtime event on transaksi:', payload.eventType);
+      if (isUpdatingFromSync) return;
+
+      if (payload.eventType === 'INSERT') {
+        const row = payload.new;
+        if (!row) return;
+        const type = row.kategori === 'Pemasukan' ? 'income' : 'expense';
+        const newTx = {
+          id: row.id,
+          description: row.nama || '-',
+          amount: Number(row.jumlah_uang) || 0,
+          type: type,
+          category: getCategoryId(type, row.jenis),
+          date: row.tanggal,
+          notes: row.catatan || '',
+          account: 'gaji'
+        };
+        if (!transactions.some(t => t.id === newTx.id)) {
+          transactions.unshift(newTx);
           saveToLocalStorage(true);
           renderAll();
-          if (typeof renderCartUI === 'function') renderCartUI();
-          isUpdatingFromSync = false;
-        } else if (localTime > cloudTime || (transactions.length > 0 && (!data.transactions || data.transactions.length === 0))) {
-          syncToSupabase();
         }
-        updateSupabaseStatusBadge('online');
-      } else if (error && error.code === 'PGRST116') {
-        // Record does not exist yet on cloud, push local
-        syncToSupabase();
-      } else if (error) {
-        console.warn('Supabase fetch notice:', error.message);
-        updateSupabaseStatusBadge('warning', 'Tabel Belum Siap');
+      } else if (payload.eventType === 'UPDATE') {
+        const row = payload.new;
+        if (!row) return;
+        const type = row.kategori === 'Pemasukan' ? 'income' : 'expense';
+        transactions = transactions.map(t => {
+          if (t.id === row.id) {
+            return {
+              ...t,
+              description: row.nama || '-',
+              amount: Number(row.jumlah_uang) || 0,
+              type: type,
+              category: getCategoryId(type, row.jenis),
+              date: row.tanggal,
+              notes: row.catatan || ''
+            };
+          }
+          return t;
+        });
+        saveToLocalStorage(true);
+        renderAll();
+      } else if (payload.eventType === 'DELETE') {
+        const oldRow = payload.old;
+        if (oldRow && oldRow.id) {
+          transactions = transactions.filter(t => t.id !== oldRow.id);
+          saveToLocalStorage(true);
+          renderAll();
+        }
       }
     })
-    .catch(err => {
-      console.warn('Initial fetch error:', err);
-    });
-
-  // 2. Realtime WebSocket subscription
-  supabaseRealtimeChannel = client
-    .channel(`realtime_${syncCode}`)
     .on('postgres_changes', {
       event: '*',
       schema: 'public',
       table: 'sync_data',
       filter: `sync_code=eq.${syncCode}`
     }, (payload) => {
+      if (isUpdatingFromSync) return;
       const newData = payload.new;
       if (!newData) return;
-      if (isUpdatingFromSync) return;
-
-      const cloudTime = Number(newData.updated_at) || 0;
-      if (cloudTime > lastSyncTimestamp) {
-        console.log('⚡ Realtime update diterima dari Supabase!');
-        isUpdatingFromSync = true;
-        transactions = newData.transactions || [];
-        budgets = newData.budgets || {};
-        if (newData.cart_items && Array.isArray(newData.cart_items) && typeof cartItems !== 'undefined') {
-          cartItems = newData.cart_items;
-          localStorage.setItem('et_cart_items', JSON.stringify(cartItems));
-        }
-        lastSyncTimestamp = cloudTime;
-        localStorage.setItem('et_last_sync_time', String(lastSyncTimestamp));
-        saveToLocalStorage(true);
+      if (newData.budgets) {
+        budgets = { ...budgets, ...newData.budgets };
+        localStorage.setItem('et_budgets', JSON.stringify(budgets));
         renderAll();
-        if (typeof renderCartUI === 'function') renderCartUI();
-        isUpdatingFromSync = false;
       }
     })
     .subscribe((status) => {

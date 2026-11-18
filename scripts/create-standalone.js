@@ -45,6 +45,15 @@ if (jsFile && cssFile) {
 
   fs.writeFileSync(path.join(distDir, 'index.html'), html, 'utf8');
   fs.writeFileSync(path.resolve('standalone.html'), html, 'utf8');
+
+  // Also sync directly to workspace root for instant Live Server access
+  const rootIndex = path.resolve('../index.html');
+  const rootExpense = path.resolve('../Expense Tracker.html');
+  try {
+    fs.writeFileSync(rootIndex, html, 'utf8');
+    fs.writeFileSync(rootExpense, html, 'utf8');
+  } catch (e) {}
+
   console.log('Successfully generated standalone dist/index.html and standalone.html with inlined base64 images!');
 } else {
   console.error('JS or CSS asset not found in dist/assets');

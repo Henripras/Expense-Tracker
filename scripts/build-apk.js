@@ -29,15 +29,15 @@ gradle.on('close', (code) => {
     console.log('=========================================');
     console.log('APK build successful!');
     
-    // Copy the APK to the root of the project
+    // Copy the APK to the root of Expense-Tracker and workspace root
     const sourceApk = path.resolve('android/app/build/outputs/apk/debug/app-debug.apk');
     const destApk = path.resolve('ExpenseTracker-debug.apk');
-    const destApkOld = path.resolve('Finansiku-debug.apk');
+    const parentDestApk = path.resolve('../ExpenseTracker-debug.apk');
     
     if (fs.existsSync(sourceApk)) {
       try {
         fs.copyFileSync(sourceApk, destApk);
-        fs.copyFileSync(sourceApk, destApkOld);
+        try { fs.copyFileSync(sourceApk, parentDestApk); } catch (e) {}
         console.log(`APK successfully copied to: ${destApk}`);
       } catch (err) {
         console.error('Failed to copy APK to root:', err.message);
