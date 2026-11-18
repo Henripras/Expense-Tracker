@@ -3092,10 +3092,9 @@ const initTxCounting = () => {
   }
 };
 
-// App Opener / Splash Screen Controller
+// App Opener / Splash Screen Controller (Direct GIF, Fast < 1s)
 const initSplashOpener = () => {
   const splash = document.getElementById('app-splash-opener');
-  const btnSkip = document.getElementById('btn-skip-opener');
   if (!splash) return;
 
   const closeOpener = () => {
@@ -3104,20 +3103,13 @@ const initSplashOpener = () => {
     splash.style.pointerEvents = 'none';
     setTimeout(() => {
       splash.style.display = 'none';
-    }, 650);
+    }, 280);
   };
-
-  if (btnSkip) {
-    btnSkip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeOpener();
-    });
-  }
 
   splash.addEventListener('click', closeOpener);
 
-  // Auto close after GIF animation completes (~4.6s)
-  setTimeout(closeOpener, 4600);
+  // Auto close exactly when GIF completes (< 1 second)
+  setTimeout(closeOpener, 960);
 };
 
 // Start application

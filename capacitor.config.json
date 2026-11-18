@@ -1,5 +1,12 @@
 {
   "appId": "com.henripras.finansiku",
   "appName": "Expense Tracker",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "launchAutoHide": true,
+      "backgroundColor": "#070e17"
+    }
+  }
 }

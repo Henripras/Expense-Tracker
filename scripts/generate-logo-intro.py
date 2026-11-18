@@ -44,8 +44,8 @@ def generate_intro_gif(src_path: str = None, out_path: str = None):
             frame = frame.resize((500, 333), Image.Resampling.LANCZOS)
             frames.append(frame)
 
-    # Give the final complete logo a longer hold for an app splash screen
-    durations = [420, 420, 420, 420, 420, 420, 420, 520, 1800]
+    # Fast snappy animation for app splash screen (total ~955ms, max 1 second)
+    durations = [75, 75, 75, 75, 75, 75, 75, 90, 340]
     frames[0].save(
         out,
         save_all=True,
